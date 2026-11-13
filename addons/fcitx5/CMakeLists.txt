@@ -40,6 +40,7 @@ target_compile_definitions(fcitx5-tgskk PRIVATE TGSKK_ZENZ_WORKER="${TGSKK_ZENZ_
 target_compile_options(fcitx5-tgskk PRIVATE -Wall -Wextra -Wpedantic)
 target_link_options(fcitx5-tgskk PRIVATE -Wl,--exclude-libs,ALL -Wl,--no-undefined)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(fcitx5-tgskk PRIVATE -Wl,--gc-sections)
     # Detached Rust workers may still be exiting when fcitx dlcloses the addon.
     target_link_options(fcitx5-tgskk PRIVATE -Wl,-z,nodelete)
 endif()

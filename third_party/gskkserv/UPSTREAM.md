@@ -11,6 +11,9 @@
 
 ## Changes made for the bundled stdio integration
 
+- Release builds use Thin LTO and one codegen unit, matching the parent
+  project's optimization policy. This excluded workspace needs its own profile.
+
 - Added `--stdio` and `--encoding=<euc-jp|utf-8>` command line options.
   `--stdio` serves the SKK wire protocol on stdin/stdout and never calls the
   TCP listener, daemonizes, binds a port, writes a PID file, or prints startup

@@ -20,3 +20,7 @@ thiserror = "2"
 
 [target.'cfg(unix)'.dependencies]
 daemonize = "0.5"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
