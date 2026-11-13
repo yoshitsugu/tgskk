@@ -15,6 +15,32 @@ use tgskk_core::input::{CskkDictionary, CskkKeyEvent, InputOutcome, InputSession
 
 mod skkserv;
 
+#[unsafe(no_mangle)]
+unsafe extern "C" fn tgskk_session_may_process(
+    session: *mut TgskkSession,
+    keysym: u32,
+    modifiers: u32,
+) -> i8 {
+    let Some(session) = (unsafe { session.as_mut() }) else {
+        return -1;
+    };
+    if session.poisoned {
+        return -1;
+    }
+    match catch_unwind(AssertUnwindSafe(|| {
+        session
+            .input
+            .may_process(&CskkKeyEvent::from_fcitx_keyevent(keysym, modifiers, false))
+    })) {
+        Ok(value) => value as i8,
+        Err(_) => {
+            session.poisoned = true;
+            session.error = diagnostic("Rust panic: discard this input session".into());
+            -1
+        }
+    }
+}
+
 struct TgskkZenz {
     worker: Worker,
 }
@@ -783,6 +809,7 @@ mod tests {
             assert!(message(tgskk_session_error(fixture.session)).contains("Rust panic"));
             assert!(tgskk_session_key(fixture.session, 97, 0, 0).is_null());
             assert!(tgskk_session_view(fixture.session).is_null());
+            assert_eq!(tgskk_session_may_process(fixture.session, 97, 0), -1);
         }
     }
     #[test]

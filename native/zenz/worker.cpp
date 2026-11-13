@@ -12,6 +12,10 @@
 #include <string>
 #include <vector>
 #include <thread>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 namespace {
 constexpr uint32_t maxString = 1024;
@@ -205,6 +209,9 @@ public:
 };
 }
 int main(int argc, char **argv) {
+#ifdef _WIN32
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1 || _setmode(_fileno(stdout), _O_BINARY) == -1) return 1;
+#endif
     if (argc != 2) { std::cerr << "Usage: tgskk-zenz-worker MODEL.gguf\n"; return 2; }
     llama_log_set([](ggml_log_level level, const char *, void *) {
         if (level == GGML_LOG_LEVEL_ERROR) std::fputs("Zenz runtime error\n", stderr);

@@ -128,6 +128,7 @@ dependencies = [
  "toml",
  "xdg",
  "xkbcommon",
+ "xkeysym",
 ]
 
 [[package]]
@@ -857,10 +858,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tgskk-process"
+version = "0.1.0"
+
+[[package]]
 name = "tgskk-skkserv"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "tgskk-process",
 ]
 
 [[package]]
@@ -869,6 +875,7 @@ version = "0.1.0"
 dependencies = [
  "tempfile",
  "tgskk-core",
+ "tgskk-process",
 ]
 
 [[package]]

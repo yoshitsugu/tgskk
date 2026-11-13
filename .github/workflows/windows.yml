@@ -1,0 +1,38 @@
+name: Windows
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  desktop:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Test common core
+        run: cargo +1.88.0 test --workspace --locked
+      - name: Build Windows core
+        run: cargo +1.88.0 build --release -p tgskk-ffi --locked
+      - name: Build TSF and test harness
+        run: |
+          cmake -S addons/windows -B build/windows -A x64 -DTGSKK_RUST_LIBRARY="$pwd/target/release/tgskk_ffi.lib"
+          cmake --build build/windows --config Release --parallel 2
+      - name: Test Windows C ABI
+        run: ctest --test-dir build/windows -C Release --output-on-failure --no-tests=error
+      - name: Test TSF on Windows
+        shell: pwsh
+        run: |
+          $text = [System.IO.File]::ReadAllText("$pwd/examples/SKK-JISYO.demo.utf8")
+          $encoding = [System.Text.Encoding]::GetEncoding(51932)
+          [System.IO.File]::WriteAllBytes("$pwd/build/windows/SKK-JISYO.L", $encoding.GetBytes($text))
+          & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/tgskk-tip.dll" "$pwd/build/windows/SKK-JISYO.L"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

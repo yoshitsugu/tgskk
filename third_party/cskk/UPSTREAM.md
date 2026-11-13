@@ -42,3 +42,14 @@ Rustライブラリとしての利用では不要な`cargo-c`のbuild dependency
 
 tgskkのworkspaceからは独立させ、上流テストを別のworkspaceとして実行する。
 `bash scripts/check.sh`で両方のテストを実行できる。
+
+## Windows portability
+
+Windows builds use a Rust keysym adapter instead of linking libxkbcommon.
+Its key constants and name table are generated from the libxkbcommon header;
+the original notices are retained in `cskk/src/portable_keysyms_data.rs`.
+Unix builds continue to use libxkbcommon. XDG-based rule discovery is Unix-only;
+Windows callers use bundled rules or an explicit rule directory.
+The read-only eligibility query includes uppercase kana starts and ASCII
+fallback input. It is conservative: the processing result still determines
+whether a key is consumed, since commands may pass keys through after effects.

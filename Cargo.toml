@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/tgskk-core",
+    "crates/tgskk-process",
     "crates/tgskk-cli",
     "crates/tgskk-ffi",
     "crates/tgskk-skkserv",

@@ -3,7 +3,9 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
+#[cfg(unix)]
 use std::os::fd::OwnedFd;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -13,6 +15,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tgskk_core::input::{ConversionCandidate, ConversionRequest, ConversionResponse, InputSession};
+#[cfg(windows)]
+use tgskk_process as windows_pipe;
 
 const MAX_CANDIDATES: usize = 8;
 const MAX_BYTES: usize = 1024;
@@ -134,7 +138,10 @@ impl Worker {
 }
 struct Process {
     child: Child,
+    #[cfg(unix)]
     socket: UnixStream,
+    #[cfg(windows)]
+    socket: windows_pipe::Pipe,
 }
 impl Drop for Process {
     fn drop(&mut self) {
@@ -146,16 +153,40 @@ impl Process {
     fn start(executable: &Path, model: &Path) -> io::Result<Self> {
         std::fs::File::open(model)
             .map_err(|e| io::Error::new(e.kind(), format!("Cannot open Zenz model: {e}")))?;
-        let (socket, child_socket) = UnixStream::pair()?;
-        socket.set_read_timeout(Some(Duration::from_secs(5)))?;
-        socket.set_write_timeout(Some(Duration::from_millis(500)))?;
-        let child = Command::new(executable)
-            .arg(model)
-            .stdin(Stdio::from(OwnedFd::from(child_socket.try_clone()?)))
-            .stdout(Stdio::from(OwnedFd::from(child_socket)))
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| io::Error::new(e.kind(), format!("Cannot start Zenz worker: {e}")))?;
+        #[cfg(unix)]
+        let (child, socket) = {
+            let (socket, child_socket) = UnixStream::pair()?;
+            socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+            socket.set_write_timeout(Some(Duration::from_millis(500)))?;
+            let child = Command::new(executable)
+                .arg(model)
+                .stdin(Stdio::from(OwnedFd::from(child_socket.try_clone()?)))
+                .stdout(Stdio::from(OwnedFd::from(child_socket)))
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| io::Error::new(e.kind(), format!("Cannot start Zenz worker: {e}")))?;
+            (child, socket)
+        };
+        #[cfg(windows)]
+        let (child, socket) = {
+            use std::os::windows::process::CommandExt;
+            let mut child = Command::new(executable)
+                .arg(model)
+                .creation_flags(0x08000000)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()?;
+            let socket = match windows_pipe::Pipe::new(&mut child) {
+                Ok(socket) => socket,
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error);
+                }
+            };
+            (child, socket)
+        };
         let mut process = Self { child, socket };
         if read_word(&mut process.socket)? != PROTOCOL_MAGIC {
             return Err(io::Error::new(
@@ -214,7 +245,7 @@ impl Process {
         Ok(scores)
     }
 }
-fn read_word(socket: &mut UnixStream) -> io::Result<u32> {
+fn read_word(socket: &mut impl Read) -> io::Result<u32> {
     let mut bytes = [0; 4];
     socket.read_exact(&mut bytes)?;
     Ok(u32::from_le_bytes(bytes))
@@ -1076,6 +1107,7 @@ mod protocol_tests {
             protected: vec![],
         }
     }
+    #[cfg(unix)]
     fn pair() -> (Process, UnixStream) {
         let (socket, server) = UnixStream::pair().unwrap();
         socket
@@ -1087,6 +1119,7 @@ mod protocol_tests {
         let child = Command::new("/bin/true").spawn().unwrap();
         (Process { child, socket }, server)
     }
+    #[cfg(unix)]
     #[test]
     fn ipc_framing_and_little_endian_scores_round_trip() {
         let (mut process, mut server) = pair();
@@ -1104,6 +1137,7 @@ mod protocol_tests {
         assert_eq!(process.score(&key()).unwrap(), vec![-0.25]);
         thread.join().unwrap();
     }
+    #[cfg(unix)]
     #[test]
     fn refused_request_leaves_the_stream_usable() {
         let (mut process, mut server) = pair();
@@ -1116,6 +1150,7 @@ mod protocol_tests {
         );
         assert_eq!(process.score(&key()).unwrap(), vec![-0.25]);
     }
+    #[cfg(unix)]
     #[test]
     fn invalid_count_nan_partial_response_and_stall_fail_closed() {
         for response in [

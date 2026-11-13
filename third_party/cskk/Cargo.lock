@@ -129,6 +129,7 @@ dependencies = [
  "toml",
  "xdg",
  "xkbcommon",
+ "xkeysym",
 ]
 
 [[package]]

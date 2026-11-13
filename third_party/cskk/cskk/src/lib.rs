@@ -7,7 +7,9 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate nom;
-extern crate xkbcommon;
+mod keysym;
+#[cfg(any(windows, test))]
+mod portable_keysyms;
 
 use crate::command_handler::ConfigurableCommandHandler;
 use crate::command_handler::Instruction;
@@ -23,6 +25,7 @@ use crate::error::CskkError;
 use crate::kana_builder::KanaBuilder;
 use crate::keyevent::KeyEventSeq;
 use crate::keyevent::{CskkKeyEvent, SkkKeyModifier};
+use crate::keysym::Keysym;
 use crate::rule::{CskkRule, CskkRuleMetadata, CskkRuleMetadataEntry};
 use crate::skk_modes::{has_rom2kana_conversion, CompositionMode};
 use crate::skk_modes::{CommaStyle, InputMode, PeriodStyle};
@@ -32,7 +35,6 @@ use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use xkbcommon::xkb::Keysym;
 
 mod candidate_list;
 #[cfg(feature = "capi")]
@@ -1571,7 +1573,8 @@ impl CskkContext {
     }
 
     ///
-    /// Returns if that key event can be processed by current CSKK
+    /// Conservative eligibility query; actual processing decides consumption.
+    /// Commands may run side effects while passing a key through.
     /// Only checking, doesn't change internal states
     ///
     pub fn will_process(&self, key_event: &CskkKeyEvent) -> bool {
@@ -1589,10 +1592,16 @@ impl CskkContext {
                 && (self
                     .kana_converter
                     .can_continue(key_event, &current_state.pre_conversion)
-                    || self.kana_converter.can_continue(key_event, &[])))
+                    || self.kana_converter.can_continue(key_event, &[])
+                    || self
+                        .kana_converter
+                        .can_continue_lower(key_event, &current_state.pre_conversion)
+                    || self.kana_converter.can_continue_lower(key_event, &[])))
                 || (!has_rom2kana_in_current_mode && key_event.is_ascii_inputtable()));
 
-        maybe_instruction.is_some() || will_be_character_input
+        maybe_instruction.is_some()
+            || will_be_character_input
+            || (key_event.is_modifierless_input() && key_event.is_ascii_inputtable())
     }
 
     fn get_handler_v2(&self) -> &ConfigurableCommandHandler {
@@ -1804,8 +1813,8 @@ impl Display for CskkState {
 mod unit_tests {
     use super::*;
     use crate::cskkstate::PreCompositionData;
+    use crate::keysym::keysyms;
     use crate::testhelper::init_test_logger;
-    use xkbcommon::xkb::keysyms;
 
     fn new_test_context(input_mode: InputMode, composition_mode: CompositionMode) -> CskkContext {
         let dict = Arc::new(

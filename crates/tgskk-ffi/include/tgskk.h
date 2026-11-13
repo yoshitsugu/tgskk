@@ -81,6 +81,11 @@ typedef struct TgskkView {
  * session. A Rust panic poisons the session and is contained at this boundary.
  * Modifiers use fcitx5's SimpleMask (XKB bits); keysym is rawKey().sym().
  * Release events are unconsumed and leave the composition unchanged. */
+/* TSF eligibility query: 1 means call key(), whose consumed flag remains
+ * authoritative; commands may have side effects while passing a key through.
+ * 0 means ineligible, -1 means failure: read session_error and discard session.
+ * Does not advance input or invalidate a borrowed view; panic poisons session. */
+int8_t tgskk_session_may_process(TgskkSession *session, uint32_t keysym, uint32_t modifiers);
 const TgskkView *tgskk_session_key(TgskkSession *session, uint32_t keysym,
                                    uint32_t modifiers, uint8_t release);
 const TgskkView *tgskk_session_select(TgskkSession *session, size_t index);

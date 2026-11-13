@@ -1,11 +1,11 @@
 use crate::env::filepath_from_xdg_data_dir;
+use crate::keysym::{self as xkb, keysym_from_name, Keysym};
 use crate::{CompositionMode, CskkError, CskkKeyEvent, InputMode, Instruction};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use xkbcommon::xkb::{self, keysym_from_name, Keysym};
 
 #[derive(Deserialize, Default, Debug)]
 pub(crate) struct CskkRuleOptions {
@@ -177,6 +177,7 @@ impl CskkRule {
 
 impl CskkRuleMetadata {
     /// Find which rules directory to use and load the metadata only.
+    #[cfg(unix)]
     pub(crate) fn load_metadata() -> Result<Self, CskkError> {
         let base_directory = xdg::BaseDirectories::new()?;
         if let Some(rule_directory) = base_directory.find_data_file("libcskk/rules") {
@@ -184,6 +185,13 @@ impl CskkRuleMetadata {
         } else {
             Err(CskkError::RuleError("No rule metadata file".to_string()))
         }
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn load_metadata() -> Result<Self, CskkError> {
+        Err(CskkError::RuleError(
+            "Use bundled rules or an explicit rules directory on this platform".into(),
+        ))
     }
 
     /// ignore xdg directory spec and load metadata from specified directory

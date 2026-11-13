@@ -81,6 +81,10 @@ impl InputSession {
         self.context.preview_conversion_limited(limit)
     }
 
+    pub fn may_process(&self, event: &CskkKeyEvent) -> bool {
+        self.context.will_process(event)
+    }
+
     pub fn process_key(&mut self, event: &CskkKeyEvent) -> InputOutcome {
         let before = self.context.get_current_input_mode();
         let consumed = self.context.process_key_event(event);
@@ -163,5 +167,28 @@ impl InputSession {
         let before = self.context.get_current_input_mode();
         cskk::skk_context_reset_rs(&mut self.context);
         self.mode_change_from(before)
+    }
+}
+
+#[cfg(test)]
+mod eligibility_tests {
+    use super::*;
+    #[test]
+    fn uppercase_start_and_repeated_queries_preserve_input_state() {
+        for modifiers in [0, 1] {
+            let mut checked = InputSession::with_dictionaries(vec![]).unwrap();
+            let mut direct = InputSession::with_dictionaries(vec![]).unwrap();
+            for symbol in "KAnji1,.!".chars() {
+                let key = CskkKeyEvent::from_fcitx_keyevent(symbol as u32, modifiers, false);
+                for _ in 0..3 {
+                    assert!(checked.may_process(&key));
+                }
+                let actual = checked.process_key(&key);
+                let expected = direct.process_key(&key);
+                assert_eq!(actual.preedit, expected.preedit);
+                assert_eq!(actual.committed, expected.committed);
+                assert_eq!(actual.consumed, expected.consumed);
+            }
+        }
     }
 }
