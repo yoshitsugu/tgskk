@@ -131,9 +131,14 @@ public:
       *result = TS_E_SYNCHRONOUS;
       return S_OK;
     }
-    if (holdAsync && !(flags & TS_LF_SYNC)) {
-      pendingLock |= flags;
-      *result = TS_S_ASYNC;
+    if (holdAsync) {
+      // An asynchronous TSF request may first try to obtain a synchronous lock.
+      if (flags & TS_LF_SYNC)
+        *result = TS_E_SYNCHRONOUS;
+      else {
+        pendingLock |= flags;
+        *result = TS_S_ASYNC;
+      }
       return S_OK;
     }
     if (locked) {
@@ -246,8 +251,6 @@ public:
     TS_TEXTCHANGE local;
     HRESULT result =
         SetText(0, start, end, value, count, change ? change : &local);
-    if (SUCCEEDED(result))
-      start = end = start + static_cast<LONG>(count);
     return result;
   }
   HRESULT STDMETHODCALLTYPE InsertEmbeddedAtSelection(
@@ -355,6 +358,15 @@ public:
     if (sink)
       sink->OnAttrsChange(0, static_cast<LONG>(text.size()), 1,
                           &GUID_PROP_INPUTSCOPE);
+  }
+  void appInsert(const std::wstring &value) {
+    TS_TEXTCHANGE change{start, end, start + static_cast<LONG>(value.size())};
+    text.replace(start, end - start, value);
+    start = end = change.acpNewEnd;
+    if (sink) {
+      sink->OnTextChange(0, &change);
+      sink->OnSelectionChange();
+    }
   }
   void grantAsync() {
     holdAsync = false;
@@ -593,13 +605,17 @@ int run(int argc, char **argv) {
   require(SUCCEEDED(manager->SetFocus(emptyDocument)), "deferred focus loss");
   pump();
   require(SUCCEEDED(manager->SetFocus(document)), "deferred focus restore");
-  require(!key('I'), "new input crossed pending cleanup");
-  require(store->text == L"▽か", "deferred cleanup edited before lock grant");
+  const bool resumed = key('I');
+  if (!resumed) {
+    store->appInsert(L"i");
+    pump();
+  }
+  const auto afterInput = store->text;
+  require(afterInput == (resumed ? L"い" : L"▽かi"),
+          "pending cleanup lost or duplicated input");
   store->grantAsync();
   pump();
-  require(store->text.empty(), "deferred cleanup retained preedit");
-  require(key('I'), "input after deferred cleanup");
-  require(store->text == L"い", "deferred cleanup erased later input");
+  require(store->text == afterInput, "deferred cleanup erased later input");
   store->replace(L"");
   pump();
   require(key('K', true), "start after refusal");
@@ -609,6 +625,20 @@ int run(int argc, char **argv) {
   pump();
   require(store->text == L"▽か",
           "post-insertion failure lost or duplicated input");
+  store->replace(L"");
+  pump();
+  require(key('K', true) && key('A'), "start before cleanup selection failure");
+  store->failSelection = true;
+  require(SUCCEEDED(manager->SetFocus(emptyDocument)),
+          "cleanup selection failure focus");
+  pump();
+  store->failSelection = false;
+  require(store->text.empty(), "cleanup selection failure retained preedit");
+  require(SUCCEEDED(manager->SetFocus(document)),
+          "focus after cleanup selection failure");
+  require(key('I'), "input after cleanup selection failure");
+  require(store->text == L"い",
+          "cleanup selection failure retained input state");
   keys->Release();
   require(SUCCEEDED(manager->SetFocus(emptyDocument)), "final focus loss");
   pump();

@@ -77,17 +77,18 @@ template <class T> void release(T *&value) {
 struct CompositionLife {
   bool live = true;
   bool cleanupQueued = false;
+  bool erase = true;
 };
 class Cleanup final : public ITfEditSession {
   std::atomic<ULONG> refs{1};
   ITfComposition *composition;
   std::shared_ptr<CompositionLife> life;
-  bool erase;
 
 public:
   Cleanup(ITfComposition *value, std::shared_ptr<CompositionLife> token,
           bool clear)
-      : composition(value), life(std::move(token)), erase(clear) {
+      : composition(value), life(std::move(token)) {
+    life->erase &= clear;
     composition->AddRef();
     ++objects;
   }
@@ -121,7 +122,7 @@ public:
     TF_SELECTION selection{};
     ULONG fetched = 0;
     HRESULT result = S_OK;
-    if (erase) {
+    if (life->erase) {
       result = composition->GetRange(&range);
       if (SUCCEEDED(result))
         result = range->GetContext(&context);
@@ -139,12 +140,11 @@ public:
       release(context);
       release(range);
     }
-    if (FAILED(result))
-      return result;
-    result = composition->EndComposition(cookie);
-    if (SUCCEEDED(result))
+    const HRESULT ended = composition->EndComposition(cookie);
+    if (SUCCEEDED(ended))
       life->live = false;
-    return result;
+    result = FAILED(result) ? result : ended;
+    return FAILED(result) ? reportFailure("end composition", result) : result;
   }
 };
 class Service;
@@ -206,6 +206,7 @@ class Service final : public ITfTextInputProcessorEx,
         return false;
       }
       const auto life = found->second;
+      life->erase &= !preserve;
       if (!life->live) {
         lifetimes.erase(found);
         release(composition);
@@ -607,10 +608,13 @@ public:
     uint32_t symbol, modifiers;
     if (!enabled || !session || disabled(context) ||
         !translate(key, scan, symbol, modifiers)) {
-      abandon();
+      BOOL ignored = FALSE;
+      if (!composition || context != active ||
+          FAILED(request(context, 0, 0, &ignored, true)))
+        abandon(true);
       return S_OK;
     }
-    if (cancelPending && !abandon())
+    if (cancelPending && context != active && !abandon())
       return S_OK;
     if (active != context) {
       if (!abandon())
@@ -639,7 +643,7 @@ public:
     }
     HRESULT result = request(context, symbol, modifiers, eaten);
     if (FAILED(result))
-      abandon(*eaten != FALSE);
+      abandon(true);
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext *, WPARAM, LPARAM,
@@ -751,6 +755,22 @@ public:
     eaten = false;
     if (!session || (active && context != active))
       return TF_E_DISCONNECTED;
+    if (cancelPending && composition) {
+      auto found = lifetimes.find(composition);
+      if (found == lifetimes.end())
+        return E_UNEXPECTED;
+      const auto life = found->second;
+      HRESULT result;
+      {
+        Cleanup cleanup(composition, life, life->erase);
+        result = cleanup.DoEditSession(cookie);
+      }
+      if (FAILED(result))
+        return result;
+      release(composition);
+      cancelPending = false;
+      clearCore();
+    }
     ITfRange *range = nullptr;
     bool fresh = !composition;
     if (composition) {
@@ -771,6 +791,11 @@ public:
       ITfReadOnlyProperty *property = nullptr;
       HRESULT scopeResult =
           context->GetAppProperty(GUID_PROP_INPUTSCOPE, &property);
+      if (FAILED(scopeResult) || !property) {
+        release(range);
+        return reportFailure("input scope property",
+                             FAILED(scopeResult) ? scopeResult : E_FAIL);
+      }
       if (SUCCEEDED(scopeResult) && property) {
         VARIANT value;
         VariantInit(&value);
