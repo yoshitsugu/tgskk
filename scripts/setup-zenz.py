@@ -35,13 +35,13 @@ def main():
         with tarfile.open(archive) as package:
             package.extractall(ROOT / "build", filter="data")
     vocab = source / "src/llama-vocab.cpp"
-    text = vocab.read_text()
+    text = vocab.read_text(encoding="utf-8")
     alias = 'tokenizer_pre == "gpt2-small-japanese-char"'
     if alias not in text:
         anchor = 'tokenizer_pre == "jina-v2-de" ||'
         if text.count(anchor) != 1:
             raise RuntimeError("llama.cpp tokenizer patch no longer applies")
-        vocab.write_text(text.replace(anchor, anchor + '\n                    ' + alias + ' ||'))
+        vocab.write_text(text.replace(anchor, anchor + '\n                    ' + alias + ' ||'), encoding="utf-8")
     if args.prepare_only:
         return
     subprocess.run([

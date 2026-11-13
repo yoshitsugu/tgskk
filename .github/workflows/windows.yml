@@ -9,6 +9,24 @@ concurrency:
   group: windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  worker:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Prepare verified worker sources and model
+        run: python scripts/setup-zenz.py --prepare-only
+      - name: Build Windows AI worker
+        run: |
+          cmake -S native/zenz -B build/zenz-windows -A x64 -DTGSKK_LLAMA_SOURCE="$pwd/build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478"
+          cmake --build build/zenz-windows --config Release --parallel 2
+      - name: Test real Windows AI scoring and Unicode paths
+        run: python native/zenz/tests/check_worker.py build/zenz-windows/Release/tgskk-zenz-worker.exe build/models/zenz-v3.2-small-Q5_K_M.gguf
   desktop:
     runs-on: windows-2025
     timeout-minutes: 30

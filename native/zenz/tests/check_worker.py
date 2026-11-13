@@ -3,25 +3,34 @@
 import math
 import os
 from pathlib import Path
+import queue
 import select
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
-WORKER, MODEL, PROBE = (Path(arg).resolve() for arg in sys.argv[1:4])
+WORKER, MODEL = (Path(arg).resolve() for arg in sys.argv[1:3])
+PROBE = Path(sys.argv[3]).resolve() if len(sys.argv) > 3 else None
 sys.argv = sys.argv[:1]
 MAGIC = 0x325A4754
 REFUSED = 0xFFFFFFFF
 
 
 class Worker:
-    def __init__(self, cwd=None, env=None):
-        self.process = subprocess.Popen([str(WORKER), str(MODEL)], cwd=cwd, env=env,
+    def __init__(self, cwd=None, env=None, model=MODEL):
+        self.process = subprocess.Popen([str(WORKER), str(model)], cwd=cwd, env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.reader = None
+        if os.name == 'nt':
+            self.incoming = queue.Queue()
+            self.buffer = b''
+            self.reader = threading.Thread(target=self.read_pipe, daemon=True)
+            self.reader.start()
         try:
             if self.word() != MAGIC:
                 raise AssertionError('Worker protocol version mismatch')
@@ -30,6 +39,20 @@ class Worker:
             raise
 
     def read(self, size):
+        if self.reader is not None:
+            deadline = time.monotonic() + 10
+            while len(self.buffer) < size:
+                try:
+                    chunk = self.incoming.get(timeout=max(0, deadline - time.monotonic()))
+                except queue.Empty:
+                    raise TimeoutError('Worker response timeout') from None
+                if isinstance(chunk, Exception):
+                    raise chunk
+                if not chunk:
+                    raise EOFError('Worker closed its output')
+                self.buffer += chunk
+            result, self.buffer = self.buffer[:size], self.buffer[size:]
+            return result
         deadline = time.monotonic() + 10
         data = b''
         while len(data) < size:
@@ -40,6 +63,16 @@ class Worker:
                 raise EOFError('Worker closed its output')
             data += chunk
         return data
+
+    def read_pipe(self):
+        try:
+            while True:
+                chunk = os.read(self.process.stdout.fileno(), 1024)
+                self.incoming.put(chunk)
+                if not chunk:
+                    return
+        except OSError as error:
+            self.incoming.put(error)
 
     def word(self):
         return struct.unpack('<I', self.read(4))[0]
@@ -71,6 +104,10 @@ class Worker:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait()
+        if self.reader is not None:
+            self.reader.join(timeout=5)
+            if self.reader.is_alive():
+                raise TimeoutError('Worker stdout reader did not stop')
         self.process.stdout.close()
 
     def __enter__(self):
@@ -81,6 +118,14 @@ class Worker:
 
 
 class NativeWorkerTests(unittest.TestCase):
+    def test_unicode_model_path(self):
+        with tempfile.TemporaryDirectory(prefix='tgskk-モデル-') as scratch:
+            model = Path(scratch) / '学習モデル.gguf'
+            shutil.copyfile(MODEL, model)
+            with Worker(model=model) as worker:
+                scores = worker.score('駅で', 'キシャ', ['記者', '汽車'])
+                self.assertGreater(scores[1], scores[0])
+
     def test_scores_match_pinned_serial_reference(self):
         # Rare kanji make a 40-character context consume many model tokens.
         rare = ('𠮷𩸽𠀋𡈽𡌛𡑮𡢽𠮟𡚴𡸴𣇄𣗄𣜿𣝣𣳾𤟱𥒎𥔎𥝱𥧄'
@@ -180,6 +225,7 @@ class NativeWorkerTests(unittest.TestCase):
             self.assertEqual(together, single)
             self.assertEqual(worker.score('駅で', 'キシャ', short), expected)
 
+    @unittest.skipUnless(PROBE, 'Linux dynamic-backend probe is not provided')
     def test_neither_cwd_nor_backend_path_loads_plugins(self):
         for location in ['cwd', 'environment']:
             with self.subTest(location=location), tempfile.TemporaryDirectory(prefix='tgskk-backend-test-') as scratch:
