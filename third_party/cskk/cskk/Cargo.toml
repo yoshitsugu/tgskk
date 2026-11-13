@@ -1,0 +1,86 @@
+[package]
+name = "cskk"
+# Have to also change the deb package destination filename below
+version.workspace = true
+authors.workspace = true
+license = "GPL-3.0-or-later"
+edition = "2018"
+readme = "../README.md"
+description = "C ABIから使う事を目的とした SKK(Simple Kana Kanji henkan)方式のかな漢字変換ライブラリ"
+repository.workspace = true
+categories = ["internationalization", "text-processing"]
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+capi = []
+
+[dependencies]
+log = "^0.4.29"
+xkbcommon = { version = "^0.8.0", default-features = false }
+bitflags = "2.10.0"
+enum-display-derive = "^0.1.0"
+serde = "^1.0.228"
+serde_derive = "^1.0.228"
+sequence_trie = { version = "^0.3.6", features = ["serde"] }
+encoding_rs = "0.8"
+encoding_rs_io = "0.1"
+toml = "0.8.23"
+thiserror = "2.0.17"
+regex = "^1.12.2"
+lazy_static = "1.4"
+xdg = { version = "^2.4" }
+anyhow = { version = "^1.0.100" }
+nom = "^8.0.0"
+serde_with = { version = "3.0.0", features = ["macros"] }
+lru_ordered_map = { path = "../lru_ordered_map" }
+tempfile = "^3.3"
+
+[dev-dependencies]
+env_logger = { version = "0.11.8", default-features = false }
+
+[package.metadata.capi]
+min_version = "0.9.6"
+
+[package.metadata.capi.library]
+install_subdir = "cskk"
+version_suffix_components = 1
+
+[package.metadata.capi.header]
+name = "libcskk"
+generation = true
+
+[package.metadata.capi.pkg_config]
+name = "libcskk"
+description = "SKK (Simple Kana Kanji) henkan library"
+
+[package.metadata.capi.install.data]
+subdirectory = "libcskk"
+asset = [{ from = "../assets/**/*" }]
+
+[package.metadata.deb]
+name = "libcskk"
+features = ["capi"]
+section = "libdevel"
+triggers-file = "deb_assets/triggers"
+revision= ""
+extended-description = """\
+Library to deal with Japanese input method.
+SKK stands for 'Simple Kana to Kanji conversion'.
+"""
+preserve-symlinks = true
+# x86_64 specific, depends on cargo-c too.
+# Includes development things like static link lib and header files too.
+assets = [["../assets/**/*", "usr/local/share/libcskk/", "644"],
+    ["target/release/libcskk.so", "usr/local/lib/cskk/libcskk.so.3.3.0", "755"],
+    ["deb_assets/libcskk.so", "usr/local/lib/cskk/", "777"],
+    ["deb_assets/libcskk.so.*", "usr/local/lib/cskk/", "777"],
+    ["deb_assets/libcskk.conf", "etc/ld.so.conf.d/libcskk.conf", "644"],
+    # FIXME: Static link lib (libcskk.a) is not generated for top release file, so we need to specify target like `--target x86_64-unknown-linux-gnu` for this to work.
+    # We might have a better configuration for the deployment.
+    ["target/release/libcskk.a", "usr/local/lib/cskk/", "644"],
+    ["target/release/cskk.pc", "usr/local/lib/pkgconfig/", "644"],
+    ["target/release/libcskk.h", "usr/local/include/cskk/", "644"]]
+
