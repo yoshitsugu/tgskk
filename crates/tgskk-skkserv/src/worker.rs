@@ -19,7 +19,9 @@ use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 #[cfg(any(unix, windows))]
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
+#[cfg(unix)]
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::thread;
@@ -558,25 +560,7 @@ impl GoogleHelper {
             (child, stream)
         };
         #[cfg(windows)]
-        let (child, stream) = {
-            use std::os::windows::process::CommandExt;
-            let mut child = Command::new(executable)
-                .args(["--stdio", "--encoding=utf-8"])
-                .creation_flags(0x08000000)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()?;
-            let stream = match tgskk_process::Pipe::new(&mut child) {
-                Ok(stream) => stream,
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(error);
-                }
-            };
-            (child, stream)
-        };
+        let (child, stream) = tgskk_process::spawn(executable, ["--stdio", "--encoding=utf-8"])?;
         Ok(Self { child, stream })
     }
 

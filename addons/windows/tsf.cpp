@@ -6,6 +6,7 @@
 #include <inputscope.h>
 #include <memory>
 #include <msctf.h>
+#include <new>
 #include <shlobj.h>
 #include <string>
 #include <unordered_map>
@@ -163,19 +164,36 @@ class Service final : public ITfTextInputProcessorEx,
     }
     editCookie = TF_INVALID_COOKIE;
   }
-  void abandon(bool preserve = false) {
+  bool cancelPending = false;
+  bool abandon(bool preserve = false) {
     if (composition && active) {
       auto found = lifetimes.find(composition);
-      if (found != lifetimes.end()) {
-        auto *cleanup = new Cleanup(composition, found->second, !preserve);
-        HRESULT status = E_FAIL;
-        active->RequestEditSession(client, cleanup,
-                                   TF_ES_ASYNC | TF_ES_READWRITE, &status);
-        cleanup->Release();
+      if (found == lifetimes.end()) {
+        cancelPending = true;
+        clearCore();
+        return false;
+      }
+      auto *cleanup =
+          new (std::nothrow) Cleanup(composition, found->second, !preserve);
+      if (!cleanup) {
+        cancelPending = true;
+        clearCore();
+        return false;
+      }
+      HRESULT status = E_FAIL;
+      HRESULT call = active->RequestEditSession(
+          client, cleanup, TF_ES_ASYNC | TF_ES_READWRITE, &status);
+      cleanup->Release();
+      if (FAILED(call) || FAILED(status)) {
+        cancelPending = true;
+        clearCore();
+        return false;
       }
     }
     release(composition);
+    cancelPending = false;
     clearCore();
+    return true;
   }
   TgskkRuntime *runtime = nullptr;
   TgskkSession *session = nullptr;
@@ -298,7 +316,10 @@ class Service final : public ITfTextInputProcessorEx,
   }
   HRESULT request(ITfContext *context, uint32_t symbol, uint32_t modifiers,
                   BOOL *eaten, bool reset = false) {
-    auto *edit = new Edit(this, context, symbol, modifiers, reset);
+    auto *edit =
+        new (std::nothrow) Edit(this, context, symbol, modifiers, reset);
+    if (!edit)
+      return E_OUTOFMEMORY;
     HRESULT result = E_FAIL;
     HRESULT call = context->RequestEditSession(
         client, edit, TF_ES_SYNC | TF_ES_READWRITE, &result);
@@ -353,12 +374,17 @@ public:
       return E_UNEXPECTED;
     if (flags & 6)
       return E_ACCESSDENIED;
+    auto moduleFile = modulePath();
+    if (moduleFile.empty())
+      return E_FAIL;
     std::wstring path =
-        (std::filesystem::path(modulePath()).parent_path() / L"SKK-JISYO.L")
+        (std::filesystem::path(moduleFile).parent_path() / L"SKK-JISYO.L")
             .wstring();
     wchar_t configured[32768];
     DWORD n = GetEnvironmentVariableW(L"TGSKK_DICTIONARY", configured, 32768);
-    if (n && n < 32768)
+    if (n >= 32768)
+      return E_INVALIDARG;
+    if (n)
       path.assign(configured, n);
     char *error = nullptr;
     runtime = tgskk_runtime_new(utf8(path).c_str(), "euc-jp", nullptr, &error);
@@ -410,9 +436,10 @@ public:
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE Deactivate() override {
-    abandon();
+    bool ended = abandon();
     unwatch();
-    release(active);
+    if (ended)
+      release(active);
     if (manager) {
       ITfKeystrokeMgr *keys = nullptr;
       if (SUCCEEDED(manager->QueryInterface(
@@ -475,8 +502,11 @@ public:
       abandon();
       return S_OK;
     }
+    if (cancelPending && !abandon())
+      return S_OK;
     if (active != context) {
-      abandon();
+      if (!abandon())
+        return S_OK;
       unwatch();
       release(active);
       active = context;
@@ -484,9 +514,19 @@ public:
       ITfSource *source = nullptr;
       if (SUCCEEDED(active->QueryInterface(
               IID_ITfSource, reinterpret_cast<void **>(&source)))) {
-        source->AdviseSink(IID_ITfTextEditSink,
-                           static_cast<ITfTextEditSink *>(this), &editCookie);
+        HRESULT watched = source->AdviseSink(
+            IID_ITfTextEditSink, static_cast<ITfTextEditSink *>(this),
+            &editCookie);
         release(source);
+        if (FAILED(watched)) {
+          editCookie = TF_INVALID_COOKIE;
+          release(active);
+          return S_OK;
+        }
+      }
+      if (editCookie == TF_INVALID_COOKIE) {
+        release(active);
+        return S_OK;
       }
     }
     HRESULT result = request(context, symbol, modifiers, eaten);
@@ -529,11 +569,18 @@ public:
     }
     if (!editing && value == composition) {
       release(composition);
+      cancelPending = false;
       clearCore();
+      if (!manager)
+        release(active);
     }
     return S_OK;
   }
-  HRESULT STDMETHODCALLTYPE OnSetThreadFocus() override { return S_OK; }
+  HRESULT STDMETHODCALLTYPE OnSetThreadFocus() override {
+    if (cancelPending)
+      abandon();
+    return S_OK;
+  }
   HRESULT STDMETHODCALLTYPE OnKillThreadFocus() override {
     abandon();
     return S_OK;
@@ -548,8 +595,7 @@ public:
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE OnPopContext(ITfContext *context) override {
-    if (active == context) {
-      abandon();
+    if (active == context && abandon()) {
       unwatch();
       release(active);
     }
@@ -557,9 +603,10 @@ public:
   }
   HRESULT STDMETHODCALLTYPE OnSetFocus(ITfDocumentMgr *,
                                        ITfDocumentMgr *) override {
-    abandon();
-    unwatch();
-    release(active);
+    if (abandon()) {
+      unwatch();
+      release(active);
+    }
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE OnEndEdit(ITfContext *context, TfEditCookie cookie,
@@ -584,6 +631,12 @@ public:
     release(range);
     release(selection.range);
     return S_OK;
+  }
+  void recover(TfEditCookie cookie) noexcept {
+    editing = false;
+    if (composition)
+      finish(cookie);
+    clearCore();
   }
   HRESULT edit(ITfContext *context, TfEditCookie cookie, uint32_t symbol,
                uint32_t modifiers, bool reset, bool &eaten) {
@@ -767,7 +820,12 @@ HRESULT Edit::QueryInterface(REFIID iid, void **out) {
   return S_OK;
 }
 HRESULT Edit::DoEditSession(TfEditCookie cookie) {
-  return owner->edit(context, cookie, symbol, modifiers, reset, eaten);
+  try {
+    return owner->edit(context, cookie, symbol, modifiers, reset, eaten);
+  } catch (...) {
+    owner->recover(cookie);
+    return E_OUTOFMEMORY;
+  }
 }
 
 class Factory final : public IClassFactory {
@@ -797,7 +855,12 @@ public:
                                            void **out) override {
     if (outer)
       return CLASS_E_NOAGGREGATION;
-    auto *service = new Service;
+    if (!out)
+      return E_POINTER;
+    *out = nullptr;
+    auto *service = new (std::nothrow) Service;
+    if (!service)
+      return E_OUTOFMEMORY;
     HRESULT result = service->QueryInterface(iid, out);
     service->Release();
     return result;
@@ -852,7 +915,9 @@ extern "C" HRESULT __stdcall DllGetClassObject(REFCLSID id, REFIID iid,
                                                void **out) {
   if (id != serviceId)
     return CLASS_E_CLASSNOTAVAILABLE;
-  auto *factory = new Factory;
+  auto *factory = new (std::nothrow) Factory;
+  if (!factory)
+    return E_OUTOFMEMORY;
   auto result = factory->QueryInterface(iid, out);
   factory->Release();
   return result;

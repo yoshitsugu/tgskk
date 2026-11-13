@@ -1578,6 +1578,9 @@ impl CskkContext {
     /// Only checking, doesn't change internal states
     ///
     pub fn will_process(&self, key_event: &CskkKeyEvent) -> bool {
+        if key_event.is_modifierless_input() && key_event.is_ascii_inputtable() {
+            return true;
+        }
         let current_state = self.current_state_ref();
         let handler = self.get_handler_v2();
         let maybe_instruction = handler.get_instruction(
@@ -1599,9 +1602,7 @@ impl CskkContext {
                     || self.kana_converter.can_continue_lower(key_event, &[])))
                 || (!has_rom2kana_in_current_mode && key_event.is_ascii_inputtable()));
 
-        maybe_instruction.is_some()
-            || will_be_character_input
-            || (key_event.is_modifierless_input() && key_event.is_ascii_inputtable())
+        maybe_instruction.is_some() || will_be_character_input
     }
 
     fn get_handler_v2(&self) -> &ConfigurableCommandHandler {

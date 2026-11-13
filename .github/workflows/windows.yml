@@ -26,12 +26,21 @@ jobs:
         run: |
           cmake -S addons/windows -B build/windows -A x64 -DTGSKK_RUST_LIBRARY="$pwd/target/release/tgskk_ffi.lib"
           cmake --build build/windows --config Release --parallel 2
+      - name: Test managed Windows pipes
+        shell: pwsh
+        run: |
+          $env:TGSKK_TEST_CHILD = "$pwd/build/windows/Release/test-windows-child.exe"
+          cargo +1.88.0 test -p tgskk-process --test stdio --locked -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.88.0 test -p tgskk-skkserv --test google_windows --locked -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows C ABI
         run: ctest --test-dir build/windows -C Release --output-on-failure --no-tests=error
       - name: Test TSF on Windows
         shell: pwsh
         run: |
           $text = [System.IO.File]::ReadAllText("$pwd/examples/SKK-JISYO.demo.utf8")
+          [System.Text.Encoding]::RegisterProvider([System.Text.CodePagesEncodingProvider]::Instance)
           $encoding = [System.Text.Encoding]::GetEncoding(51932)
           [System.IO.File]::WriteAllBytes("$pwd/build/windows/SKK-JISYO.L", $encoding.GetBytes($text))
           & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/tgskk-tip.dll" "$pwd/build/windows/SKK-JISYO.L"

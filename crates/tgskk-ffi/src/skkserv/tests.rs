@@ -3,6 +3,7 @@ use crate::{tgskk_session_key, tgskk_session_reset, tgskk_session_set_zenz, tgsk
 use std::ffi::{CStr, CString};
 use std::io::{Read, Write};
 use std::net::TcpListener;
+#[cfg(unix)]
 use std::process::Command;
 use std::sync::{
     Arc,

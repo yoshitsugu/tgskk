@@ -3,8 +3,10 @@
 //! blocked OS pipe reads/writes are released as well as channel waits.
 #![cfg(windows)]
 use std::cell::Cell;
+use std::ffi::OsStr;
 use std::io::{self, Read, Write};
-use std::process::Child;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::Duration;
 
@@ -14,6 +16,7 @@ pub struct Pipe {
     written: Receiver<io::Result<()>>,
     buffer: Vec<u8>,
     position: usize,
+    eof: bool,
     timeout: Cell<Duration>,
     write_timeout: Cell<Duration>,
 }
@@ -29,15 +32,12 @@ impl Pipe {
             .ok_or_else(|| io::Error::other("Missing worker stdin"))?;
         let (send, incoming) = mpsc::sync_channel(2);
         std::thread::Builder::new()
-            .name("zenz-pipe-read".into())
+            .name("tgskk-stdio-read".into())
             .spawn(move || {
                 loop {
                     let mut bytes = vec![0; 1024];
                     let message = match stdout.read(&mut bytes) {
-                        Ok(0) => Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "Worker closed stdout",
-                        )),
+                        Ok(0) => Ok(Vec::new()),
                         Ok(n) => {
                             bytes.truncate(n);
                             Ok(bytes)
@@ -45,7 +45,7 @@ impl Pipe {
                         Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                         Err(error) => Err(error),
                     };
-                    let failed = message.is_err();
+                    let failed = message.as_ref().map_or(true, |bytes| bytes.is_empty());
                     if send.send(message).is_err() || failed {
                         break;
                     }
@@ -54,7 +54,7 @@ impl Pipe {
         let (outgoing, receive) = mpsc::sync_channel::<Vec<u8>>(1);
         let (acknowledge, written) = mpsc::sync_channel(1);
         std::thread::Builder::new()
-            .name("zenz-pipe-write".into())
+            .name("tgskk-stdio-write".into())
             .spawn(move || {
                 while let Ok(bytes) = receive.recv() {
                     let result = stdin.write_all(&bytes).and_then(|_| stdin.flush());
@@ -70,6 +70,7 @@ impl Pipe {
             written,
             buffer: Vec::new(),
             position: 0,
+            eof: false,
             timeout: Cell::new(Duration::from_secs(5)),
             write_timeout: Cell::new(Duration::from_millis(500)),
         })
@@ -98,7 +99,7 @@ fn receive_error(error: mpsc::RecvTimeoutError) -> io::Error {
 }
 impl Read for Pipe {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        if out.is_empty() {
+        if out.is_empty() || self.eof {
             return Ok(0);
         }
         if self.position == self.buffer.len() {
@@ -107,6 +108,10 @@ impl Read for Pipe {
                 .recv_timeout(self.timeout.get())
                 .map_err(receive_error)??;
             self.position = 0;
+            if self.buffer.is_empty() {
+                self.eof = true;
+                return Ok(0);
+            }
         }
         let count = out.len().min(self.buffer.len() - self.position);
         out[..count].copy_from_slice(&self.buffer[self.position..self.position + count]);
@@ -129,5 +134,31 @@ impl Write for Pipe {
     }
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+/// Starts a console-free helper with private stdio handles. The returned child
+/// remains owned by the caller, including kill/reap on protocol failure.
+pub fn spawn<I, S>(executable: &Path, args: I) -> io::Result<(Child, Pipe)>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let mut child = Command::new(executable)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    match Pipe::new(&mut child) {
+        Ok(pipe) => Ok((child, pipe)),
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(error)
+        }
     }
 }

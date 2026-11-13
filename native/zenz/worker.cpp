@@ -15,6 +15,9 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #endif
 
 namespace {
@@ -208,7 +211,7 @@ public:
     }
 };
 }
-int main(int argc, char **argv) {
+int workerMain(int argc, char **argv) {
 #ifdef _WIN32
     if (_setmode(_fileno(stdin), _O_BINARY) == -1 || _setmode(_fileno(stdout), _O_BINARY) == -1) return 1;
 #endif
@@ -245,3 +248,22 @@ int main(int argc, char **argv) {
         return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t **argv) {
+    std::vector<std::string> values;
+    for (int i = 0; i < argc; ++i) {
+        int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[i], -1, nullptr, 0, nullptr, nullptr);
+        if (!n) return 1;
+        std::string value(n, '\0');
+        if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[i], -1, value.data(), n, nullptr, nullptr)) return 1;
+        value.pop_back(); values.push_back(std::move(value));
+    }
+    std::vector<char *> pointers;
+    for (auto &value : values) pointers.push_back(value.data());
+    pointers.push_back(nullptr);
+    return workerMain(argc, pointers.data());
+}
+#else
+int main(int argc, char **argv) { return workerMain(argc, argv); }
+#endif

@@ -1,5 +1,5 @@
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,11 +21,20 @@ struct TestServer {
 }
 
 impl TestServer {
-    fn start<F>(connections: usize, mut handler: F) -> Self
+    fn start<F>(connections: usize, handler: F) -> Self
     where
         F: FnMut(TcpStream, usize) + Send + 'static,
     {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        Self::on(
+            TcpListener::bind(("127.0.0.1", 0)).expect("bind"),
+            connections,
+            handler,
+        )
+    }
+    fn on<F>(listener: TcpListener, connections: usize, mut handler: F) -> Self
+    where
+        F: FnMut(TcpStream, usize) + Send + 'static,
+    {
         let addr = listener.local_addr().expect("local addr");
         listener
             .set_nonblocking(true)
@@ -471,23 +480,16 @@ fn invalid_readings_are_rejected_before_network() {
 
 #[test]
 fn hostname_host_is_resolved_by_worker() {
-    let probe = TcpListener::bind(("127.0.0.1", 0)).expect("bind probe");
-    let probe_port = probe.local_addr().expect("probe addr").port();
-    let resolves_to_v4 = ("localhost", probe_port)
-        .to_socket_addrs()
-        .map(|mut addresses| addresses.any(|addr| addr.ip().is_loopback() && addr.is_ipv4()))
-        .unwrap_or(false);
-    drop(probe);
-    if !resolves_to_v4 {
-        return;
-    }
-
     let (request_tx, request_rx) = mpsc::channel();
-    let server = TestServer::start(1, move |mut stream, _| {
-        let request = read_request(&mut stream);
-        let _ = request_tx.send(request);
-        let _ = send(&mut stream, b"1/\xe6\x97\xa5\xe6\x9c\xac/\n");
-    });
+    let server = TestServer::on(
+        TcpListener::bind(("localhost", 0)).expect("bind hostname"),
+        1,
+        move |mut stream, _| {
+            let request = read_request(&mut stream);
+            let _ = request_tx.send(request);
+            let _ = send(&mut stream, b"1/\xe6\x97\xa5\xe6\x9c\xac/\n");
+        },
+    );
     let config = Config::tcp("localhost", server.addr().port(), Encoding::Utf8).expect("config");
     let worker = Worker::start(config).expect("worker");
 

@@ -18,6 +18,8 @@ class Store final : public ITextStoreACP,
                     public ITfContextOwnerCompositionSink {
   ULONG refs = 1;
   ITextStoreACPSink *sink = nullptr;
+  bool locked = false;
+  DWORD pendingLock = 0;
 
 public:
   std::wstring text;
@@ -68,7 +70,25 @@ public:
       *result = TS_E_SYNCHRONOUS;
       return S_OK;
     }
+    if (locked) {
+      if (flags & TS_LF_SYNC)
+        *result = TS_E_SYNCHRONOUS;
+      else {
+        pendingLock |= flags;
+        *result = TS_S_ASYNC;
+      }
+      return S_OK;
+    }
+    locked = true;
     *result = sink->OnLockGranted(flags);
+    locked = false;
+    while (pendingLock) {
+      DWORD next = pendingLock;
+      pendingLock = 0;
+      locked = true;
+      sink->OnLockGranted(next);
+      locked = false;
+    }
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE GetStatus(TS_STATUS *value) override {
@@ -108,16 +128,17 @@ public:
     if (a < 0 || b < a || b > static_cast<LONG>(text.size()))
       return TS_E_INVALIDPOS;
     ULONG count = std::min<ULONG>(b - a, capacity);
+    ULONG runCount = capacity ? count : static_cast<ULONG>(b - a);
     if (out && count)
       std::copy_n(text.data() + a, count, out);
     if (length)
       *length = count;
     if (runLength)
-      *runLength = runCapacity && count ? 1 : 0;
-    if (runCapacity && count)
-      runs[0] = {count, TS_RT_PLAIN};
+      *runLength = runCapacity && runCount ? 1 : 0;
+    if (runCapacity && runCount)
+      runs[0] = {runCount, TS_RT_PLAIN};
     if (next)
-      *next = a + count;
+      *next = a + (runCapacity ? runCount : count);
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE SetText(DWORD, LONG a, LONG b, const WCHAR *value,
@@ -377,9 +398,9 @@ int main(int argc, char **argv) {
   pump();
   require(SUCCEEDED(unregistration()), "TSF unregistration");
   pump();
+  CoUninitialize();
   require(unload() == S_OK, "COM objects leaked");
   FreeLibrary(dll);
-  CoUninitialize();
   std::puts("TSF composition, rejection, key propagation, focus and COM "
             "lifetime passed.");
 }

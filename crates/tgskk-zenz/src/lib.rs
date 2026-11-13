@@ -9,7 +9,9 @@ use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
+#[cfg(unix)]
+use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -168,25 +170,7 @@ impl Process {
             (child, socket)
         };
         #[cfg(windows)]
-        let (child, socket) = {
-            use std::os::windows::process::CommandExt;
-            let mut child = Command::new(executable)
-                .arg(model)
-                .creation_flags(0x08000000)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()?;
-            let socket = match windows_pipe::Pipe::new(&mut child) {
-                Ok(socket) => socket,
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(error);
-                }
-            };
-            (child, socket)
-        };
+        let (child, socket) = windows_pipe::spawn(executable, [model.as_os_str()])?;
         let mut process = Self { child, socket };
         if read_word(&mut process.socket)? != PROTOCOL_MAGIC {
             return Err(io::Error::new(
@@ -1092,9 +1076,10 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod protocol_tests {
     use super::*;
+    #[cfg(unix)]
     fn key() -> Key {
         Key {
             epoch: 0,
