@@ -2,6 +2,7 @@
 #include "tgskk.h"
 #include "tsf_compat.h"
 #include <atomic>
+#include <cstdio>
 #include <filesystem>
 #include <inputscope.h>
 #include <memory>
@@ -25,6 +26,16 @@ const GUID profileId = {0x70c846ab,
 HMODULE module;
 std::atomic<long> objects = 0;
 std::atomic<long> locks = 0;
+HRESULT reportFailure(const char *stage, HRESULT result) {
+  char message[160];
+  std::snprintf(message, sizeof(message), "tgskk: %s failed (%08lx)\n", stage,
+                static_cast<unsigned long>(result));
+  OutputDebugStringA(message);
+  wchar_t enabled[2];
+  if (GetEnvironmentVariableW(L"TGSKK_DEBUG", enabled, 2))
+    std::fputs(message, stderr);
+  return result;
+}
 
 std::wstring wide(const char *text) {
   if (!text || !*text)
@@ -368,7 +379,8 @@ class Service final : public ITfTextInputProcessorEx,
     if (eaten)
       *eaten = SUCCEEDED(call) && edit->eaten;
     edit->Release();
-    return FAILED(call) ? call : result;
+    const HRESULT status = FAILED(call) ? call : result;
+    return FAILED(status) ? reportFailure("edit request", status) : status;
   }
 
 public:
@@ -700,15 +712,18 @@ public:
       return TF_E_DISCONNECTED;
     ITfRange *range = nullptr;
     bool fresh = !composition;
-    if (composition)
-      composition->GetRange(&range);
+    if (composition) {
+      const HRESULT result = composition->GetRange(&range);
+      if (FAILED(result))
+        return reportFailure("composition range", result);
+    }
     if (!range) {
       TF_SELECTION selection{};
       ULONG fetched = 0;
       HRESULT hr = context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1,
                                          &selection, &fetched);
       if (FAILED(hr) || fetched != 1 || !selection.range)
-        return E_FAIL;
+        return reportFailure("selection", FAILED(hr) ? hr : E_FAIL);
       range = selection.range;
     }
     if (!reset) {
@@ -740,7 +755,9 @@ public:
         release(property);
         if (sensitive || FAILED(scopeResult)) {
           release(range);
-          return E_ACCESSDENIED;
+          return reportFailure("input scope", FAILED(scopeResult)
+                                                  ? scopeResult
+                                                  : E_ACCESSDENIED);
         }
       }
     }
@@ -762,7 +779,7 @@ public:
       if (FAILED(hr) || !composition) {
         editing = false;
         release(range);
-        return FAILED(hr) ? hr : E_FAIL;
+        return reportFailure("start composition", FAILED(hr) ? hr : E_FAIL);
       }
       lifetimes[composition] = std::make_shared<bool>(true);
     }
@@ -859,7 +876,7 @@ public:
     }
     editing = false;
     release(range);
-    return result;
+    return FAILED(result) ? reportFailure("apply edit", result) : result;
   }
 };
 Edit::Edit(Service *value, ITfContext *ctx, uint32_t key, uint32_t mods,

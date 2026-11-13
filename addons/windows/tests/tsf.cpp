@@ -4,14 +4,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <msctf.h>
+#include <stdexcept>
 #include <string>
 #include <textstor.h>
 #include <windows.h>
 
 static void require(bool condition, const char *reason) {
   if (!condition) {
-    std::fprintf(stderr, "%s (error=%lu)\n", reason, GetLastError());
-    std::exit(1);
+    throw std::runtime_error(reason);
   }
 }
 class Store final : public ITextStoreACP,
@@ -279,7 +279,16 @@ void pump() {
     Sleep(2);
   }
 }
-int main(int argc, char **argv) {
+struct RegistrationGuard {
+  HRESULT(WINAPI *remove)();
+  bool active = false;
+  ~RegistrationGuard() {
+    if (active && FAILED(remove()))
+      std::fputs("TSF cleanup failed; run regsvr32 /u on the test DLL.\n",
+                 stderr);
+  }
+};
+int run(int argc, char **argv) {
   require(argc == 3, "Usage: test-tsf dll euc-jp-dictionary");
   SetEnvironmentVariableA("TGSKK_DICTIONARY", argv[2]);
   require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
@@ -295,6 +304,7 @@ int main(int argc, char **argv) {
       GetProcAddress(dll, "DllUnregisterServer"));
   auto unload = reinterpret_cast<HRESULT(WINAPI *)()>(
       GetProcAddress(dll, "DllCanUnloadNow"));
+  RegistrationGuard cleanup{unregistration};
   require(getFactory && unload, "COM exports");
   CLSID serviceId = {0xc7993bd4,
                      0x1094,
@@ -312,8 +322,9 @@ int main(int argc, char **argv) {
   factory->Release();
   service->Release();
   service = nullptr;
-  require(registration && unregistration && SUCCEEDED(registration()),
-          "TSF registration");
+  require(registration && unregistration, "registration exports");
+  require(SUCCEEDED(registration()), "TSF registration");
+  cleanup.active = true;
   require(registration() == S_OK, "repeated TSF registration");
   ITfThreadMgr *manager = nullptr;
   require(SUCCEEDED(CoCreateInstance(CLSID_TF_ThreadMgr, nullptr,
@@ -324,6 +335,9 @@ int main(int argc, char **argv) {
   require(SUCCEEDED(manager->Activate(&id)), "TSF activation");
   ITfDocumentMgr *document = nullptr;
   require(SUCCEEDED(manager->CreateDocumentMgr(&document)), "document");
+  ITfDocumentMgr *emptyDocument = nullptr;
+  require(SUCCEEDED(manager->CreateDocumentMgr(&emptyDocument)),
+          "unfocused document");
   auto *store = new Store;
   store->window =
       CreateWindowW(L"STATIC", L"tgskk test", WS_OVERLAPPEDWINDOW, 0, 0, 800,
@@ -343,8 +357,6 @@ int main(int argc, char **argv) {
   require(
       SUCCEEDED(manager->AssociateFocus(store->window, document, &previous)),
       "associate window focus");
-  if (previous)
-    previous->Release();
   GUID profileId = {0x70c846ab,
                     0x9fb5,
                     0x43cb,
@@ -394,7 +406,8 @@ int main(int argc, char **argv) {
     require(SetKeyboardState(state), "keyboard state");
     BOOL test = FALSE, eaten = FALSE;
     const LPARAM scan = 1 | (MapVirtualKeyW(code, MAPVK_VK_TO_VSC) << 16);
-    require(SUCCEEDED(keys->TestKeyDown(code, scan, &test)), "key eligibility");
+    const HRESULT testResult = keys->TestKeyDown(code, scan, &test);
+    require(SUCCEEDED(testResult), "key eligibility");
     if (test)
       require(SUCCEEDED(keys->KeyDown(code, scan, &eaten)), "key callback");
     if (!eaten) {
@@ -405,12 +418,13 @@ int main(int argc, char **argv) {
       HRESULT activeResult = profiles->GetActiveLanguageProfile(
           serviceId, &activeLanguage, &activeProfile);
       std::fprintf(stderr,
-                   "key=%u eligible=%d foreground=%08lx ours=%d "
-                   "profile=%08lx lang=%04x ours=%d focus=%p/%p\\n",
-                   code, test, foregroundResult, foreground == serviceId,
-                   activeResult, activeLanguage, activeProfile == profileId,
-                   GetFocus(), store->window);
+                   "key=%u test=%08lx eligible=%d foreground=%08lx ours=%d "
+                   "profile=%08lx lang=%04x ours=%d focus=%p/%p\n",
+                   code, testResult, test, foregroundResult,
+                   foreground == serviceId, activeResult, activeLanguage,
+                   activeProfile == profileId, GetFocus(), store->window);
     }
+    require(testResult == S_OK, "TSF key sink unavailable");
     pump();
     return eaten;
   };
@@ -418,9 +432,9 @@ int main(int argc, char **argv) {
   require(key('A'), "kana continuation");
   require(store->text == L"▽か", "wrong preedit");
   key(VK_ESCAPE);
-  manager->SetFocus(nullptr);
+  require(SUCCEEDED(manager->SetFocus(emptyDocument)), "leave document");
   pump();
-  manager->SetFocus(document);
+  require(SUCCEEDED(manager->SetFocus(document)), "restore document");
   pump();
   require(store->text.empty(), "focus retained preedit");
   store->refuseComposition = true;
@@ -472,12 +486,21 @@ int main(int argc, char **argv) {
   require(store->text == L"▽か",
           "post-insertion failure lost or duplicated input");
   keys->Release();
-  manager->SetFocus(nullptr);
+  require(SUCCEEDED(manager->SetFocus(emptyDocument)), "final focus loss");
   pump();
   profiles->Release();
+  ITfDocumentMgr *replaced = nullptr;
+  require(
+      SUCCEEDED(manager->AssociateFocus(store->window, previous, &replaced)),
+      "restore window association");
+  if (replaced)
+    replaced->Release();
+  if (previous)
+    previous->Release();
   document->Pop(TF_POPF_ALL);
   context->Release();
   document->Release();
+  emptyDocument->Release();
   manager->Deactivate();
   manager->Release();
   DestroyWindow(store->window);
@@ -485,10 +508,20 @@ int main(int argc, char **argv) {
   pump();
   require(SUCCEEDED(unregistration()), "TSF unregistration");
   require(unregistration() == S_OK, "repeated TSF unregistration");
+  cleanup.active = false;
   pump();
   CoUninitialize();
   require(unload() == S_OK, "COM objects leaked");
   FreeLibrary(dll);
   std::puts("TSF composition, rejection, key propagation, focus and COM "
             "lifetime passed.");
+  return 0;
+}
+int main(int argc, char **argv) {
+  try {
+    return run(argc, argv);
+  } catch (const std::exception &error) {
+    std::fprintf(stderr, "%s\n", error.what());
+    return 1;
+  }
 }

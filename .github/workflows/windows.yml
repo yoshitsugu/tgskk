@@ -59,6 +59,7 @@ jobs:
       - name: Test TSF on Windows
         shell: pwsh
         run: |
+          $env:TGSKK_DEBUG = '1'
           $text = [System.IO.File]::ReadAllText("$pwd/examples/SKK-JISYO.demo.utf8")
           $text += "`nこう /" + ((1..14 | ForEach-Object { '候補{0:D2}' -f $_ }) -join '/') + "/`n"
           [System.Text.Encoding]::RegisterProvider([System.Text.CodePagesEncodingProvider]::Instance)
