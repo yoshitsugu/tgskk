@@ -83,6 +83,7 @@ public:
   std::wstring text;
   LONG start = 0, end = 0;
   bool refuseComposition = false, failSelection = false, denyLock = false;
+  bool holdAsync = false;
   InputScope scope = IS_DEFAULT;
   bool scopeFailure = false;
   HWND window = nullptr;
@@ -130,6 +131,11 @@ public:
       *result = TS_E_SYNCHRONOUS;
       return S_OK;
     }
+    if (holdAsync && !(flags & TS_LF_SYNC)) {
+      pendingLock |= flags;
+      *result = TS_S_ASYNC;
+      return S_OK;
+    }
     if (locked) {
       if (flags & TS_LF_SYNC)
         *result = TS_E_SYNCHRONOUS;
@@ -142,7 +148,7 @@ public:
     locked = true;
     *result = sink->OnLockGranted(flags);
     locked = false;
-    while (pendingLock) {
+    while (pendingLock && !holdAsync) {
       DWORD next = pendingLock;
       pendingLock = 0;
       locked = true;
@@ -207,6 +213,7 @@ public:
     if (a < 0 || b < a || b > static_cast<LONG>(text.size()))
       return TS_E_INVALIDPOS;
     text.replace(a, b - a, value, count);
+    start = end = a + static_cast<LONG>(count);
     *change = {a, b, a + static_cast<LONG>(count)};
     return S_OK;
   }
@@ -348,6 +355,16 @@ public:
     if (sink)
       sink->OnAttrsChange(0, static_cast<LONG>(text.size()), 1,
                           &GUID_PROP_INPUTSCOPE);
+  }
+  void grantAsync() {
+    holdAsync = false;
+    while (pendingLock) {
+      DWORD flags = pendingLock;
+      pendingLock = 0;
+      locked = true;
+      sink->OnLockGranted(flags);
+      locked = false;
+    }
   }
 };
 void pump() {
@@ -569,6 +586,20 @@ int run(int argc, char **argv) {
   require(store->text == L"あ", "caret movement retained stale preedit");
   require(key('I'), "input after caret movement");
   require(store->text == L"いあ", "input used old caret position");
+  store->replace(L"");
+  pump();
+  require(key('K', true) && key('A'), "start before delayed cleanup");
+  store->holdAsync = true;
+  require(SUCCEEDED(manager->SetFocus(emptyDocument)), "deferred focus loss");
+  pump();
+  require(SUCCEEDED(manager->SetFocus(document)), "deferred focus restore");
+  require(!key('I'), "new input crossed pending cleanup");
+  require(store->text == L"▽か", "deferred cleanup edited before lock grant");
+  store->grantAsync();
+  pump();
+  require(store->text.empty(), "deferred cleanup retained preedit");
+  require(key('I'), "input after deferred cleanup");
+  require(store->text == L"い", "deferred cleanup erased later input");
   store->replace(L"");
   pump();
   require(key('K', true), "start after refusal");

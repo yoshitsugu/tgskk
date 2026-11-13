@@ -74,15 +74,20 @@ template <class T> void release(T *&value) {
     value = nullptr;
   }
 }
+struct CompositionLife {
+  bool live = true;
+  bool cleanupQueued = false;
+};
 class Cleanup final : public ITfEditSession {
   std::atomic<ULONG> refs{1};
   ITfComposition *composition;
-  std::shared_ptr<bool> live;
+  std::shared_ptr<CompositionLife> life;
   bool erase;
 
 public:
-  Cleanup(ITfComposition *value, std::shared_ptr<bool> token, bool clear)
-      : composition(value), live(std::move(token)), erase(clear) {
+  Cleanup(ITfComposition *value, std::shared_ptr<CompositionLife> token,
+          bool clear)
+      : composition(value), life(std::move(token)), erase(clear) {
     composition->AddRef();
     ++objects;
   }
@@ -108,22 +113,37 @@ public:
     return n;
   }
   HRESULT STDMETHODCALLTYPE DoEditSession(TfEditCookie cookie) override {
-    if (!*live)
+    life->cleanupQueued = false;
+    if (!life->live)
       return S_OK;
     ITfRange *range = nullptr;
+    ITfContext *context = nullptr;
+    TF_SELECTION selection{};
+    ULONG fetched = 0;
     HRESULT result = S_OK;
     if (erase) {
       result = composition->GetRange(&range);
+      if (SUCCEEDED(result))
+        result = range->GetContext(&context);
+      if (SUCCEEDED(result))
+        result = context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1,
+                                       &selection, &fetched);
+      if (SUCCEEDED(result) && (fetched != 1 || !selection.range))
+        result = E_FAIL;
       if (SUCCEEDED(result)) {
         result = range->SetText(cookie, 0, L"", 0);
-        release(range);
       }
+      if (SUCCEEDED(result))
+        result = context->SetSelection(cookie, 1, &selection);
+      release(selection.range);
+      release(context);
+      release(range);
     }
     if (FAILED(result))
       return result;
     result = composition->EndComposition(cookie);
     if (SUCCEEDED(result))
-      *live = false;
+      life->live = false;
     return result;
   }
 };
@@ -163,7 +183,8 @@ class Service final : public ITfTextInputProcessorEx,
   DWORD threadCookie = TF_INVALID_COOKIE;
   DWORD editCookie = TF_INVALID_COOKIE;
   DWORD focusCookie = TF_INVALID_COOKIE;
-  std::unordered_map<ITfComposition *, std::shared_ptr<bool>> lifetimes;
+  std::unordered_map<ITfComposition *, std::shared_ptr<CompositionLife>>
+      lifetimes;
   void unwatch() {
     if (active && editCookie != TF_INVALID_COOKIE) {
       ITfSource *source = nullptr;
@@ -184,6 +205,19 @@ class Service final : public ITfTextInputProcessorEx,
         clearCore();
         return false;
       }
+      const auto life = found->second;
+      if (!life->live) {
+        lifetimes.erase(found);
+        release(composition);
+        cancelPending = false;
+        clearCore();
+        return true;
+      }
+      if (life->cleanupQueued) {
+        cancelPending = true;
+        clearCore();
+        return false;
+      }
       auto *cleanup =
           new (std::nothrow) Cleanup(composition, found->second, !preserve);
       if (!cleanup) {
@@ -192,10 +226,17 @@ class Service final : public ITfTextInputProcessorEx,
         return false;
       }
       HRESULT status = E_FAIL;
+      life->cleanupQueued = true;
       HRESULT call = active->RequestEditSession(
           client, cleanup, TF_ES_ASYNC | TF_ES_READWRITE, &status);
       cleanup->Release();
       if (FAILED(call) || FAILED(status)) {
+        life->cleanupQueued = false;
+        cancelPending = true;
+        clearCore();
+        return false;
+      }
+      if (life->live) {
         cancelPending = true;
         clearCore();
         return false;
@@ -218,7 +259,7 @@ class Service final : public ITfTextInputProcessorEx,
     if (SUCCEEDED(result)) {
       auto found = lifetimes.find(current);
       if (found != lifetimes.end()) {
-        *found->second = false;
+        found->second->live = false;
         lifetimes.erase(found);
       }
       if (composition == current)
@@ -631,7 +672,7 @@ public:
   OnCompositionTerminated(TfEditCookie, ITfComposition *value) override {
     auto found = lifetimes.find(value);
     if (found != lifetimes.end()) {
-      *found->second = false;
+      found->second->live = false;
       lifetimes.erase(found);
     }
     if (!editing && value == composition) {
@@ -766,7 +807,8 @@ public:
       release(range);
       return S_OK;
     }
-    std::erase_if(lifetimes, [](const auto &entry) { return !*entry.second; });
+    std::erase_if(lifetimes,
+                  [](const auto &entry) { return !entry.second->live; });
     editing = true;
     if (fresh) {
       ITfContextComposition *owner = nullptr;
@@ -781,7 +823,7 @@ public:
         release(range);
         return reportFailure("start composition", FAILED(hr) ? hr : E_FAIL);
       }
-      lifetimes[composition] = std::make_shared<bool>(true);
+      lifetimes[composition] = std::make_shared<CompositionLife>();
     }
     const TgskkView *view =
         reset ? tgskk_session_reset(session) : keyView(symbol, modifiers);

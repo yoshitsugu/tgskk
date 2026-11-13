@@ -36,7 +36,7 @@ providerは候補一覧の初回構築時に呼ばれ、すでに表示してい
 ## ビルドと検証の調整
 
 Rustライブラリとしての利用では不要な`cargo-c`のbuild dependencyを外し、xkbcommonのWayland向けfeatureを無効にした。
-キーの解釈に必要なlibxkbcommonへの依存は残る。
+Unixではキーの解釈に必要なlibxkbcommonへの依存が残る。
 テスト用loggerのdefault featureも外した。
 元のCargoパッケージ用metadataは保持しているが、リリース用の`cargo cinstall`やDebianパッケージ生成は検証していない。
 
@@ -48,6 +48,9 @@ tgskkのworkspaceからは独立させ、上流テストを別のworkspaceとし
 Windows builds use a Rust keysym adapter instead of linking libxkbcommon.
 Its key constants and name table are generated from the libxkbcommon header;
 the original notices are retained in `cskk/src/portable_keysyms_data.rs`.
+The generator pins the libxkbcommon 1.13.2 header by SHA-256. Parity tests compare
+the common names with the installed library; newer names and control/numeric
+key mappings are checked independently when that library predates them.
 Unix builds continue to use libxkbcommon. XDG-based rule discovery is Unix-only;
 Windows callers use bundled rules or an explicit rule directory.
 The read-only eligibility query includes uppercase kana starts and ASCII
