@@ -19,9 +19,16 @@ fcitx5の設定画面から「tgskk」の設定を開きます。
 | `ZenzEnabled` | `True` | ローカルAIによる候補の並べ替え |
 | `ZenzModel` | `/usr/share/tgskk/zenz-v3.2-small-Q5_K_M.gguf` | v3形式に対応するモデルのパス |
 
+配布パッケージでは、`tgskk-setup-model`でモデルを取得できます（sudo不要）。
+既定の保存先は`~/.local/share/fcitx5/tgskk/`です。
+`ZenzModel`が既定値の場合は、このディレクトリのモデルを優先します。
+取得後はfcitx5を再起動してください。
+`--directory`で別の場所を指定した場合は、`ZenzModel`にもそのファイルのパスを指定します。
+
 辞書ファイルの内容を同じパスで更新した場合は、fcitx5を再起動して読み直してください。
 モード表示や`InlineCandidates`の変更では、入力途中の文字を保持します。
 モード表示の位置・期間と補助行の書体・文字サイズは、fcitx5のUIに従います。
+fcitx5 5.1.7〜5.1.8では注釈を候補の後ろに表示し、5.1.10以前のモード通知はfcitx5共通の表示設定にも従います。
 GNOME Waylandの実アプリでの表示は未検証です。
 
 ### SKK server

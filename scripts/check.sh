@@ -5,6 +5,7 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
 
 cargo fmt --all --check
+python3 -m unittest discover -s scripts/tests
 cargo fmt --manifest-path third_party/gskkserv/Cargo.toml -- --check
 cargo test --workspace --locked "$@"
 cargo test --manifest-path third_party/gskkserv/Cargo.toml --target-dir "$project_root/target" --locked "$@"

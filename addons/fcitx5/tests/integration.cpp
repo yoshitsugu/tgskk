@@ -3,7 +3,8 @@
 #include <fcitx-utils/capabilityflags.h>
 #include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/log.h>
-#include <fcitx-utils/standardpaths.h>
+#include "../paths.h"
+#include "tgskk-features.h"
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h>
 #include <fcitx/candidatelist.h>
@@ -295,7 +296,7 @@ void verifyDelayedCandidates(Instance &instance, InputMethodEngine &engine,
   FCITX_ASSERT(!context.inputPanel().candidateList());
   send(context, "space");
   auto list = context.inputPanel().candidateList();
-  FCITX_ASSERT(list && list->candidate(0).text().toString() == "一覧五");
+  FCITX_ASSERT(list && list->candidate(0).text().stringAt(0) == "一覧五");
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼一覧五");
   send(context, "space");
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼一覧十二");
@@ -337,7 +338,7 @@ void verifyDelayedCandidates(Instance &instance, InputMethodEngine &engine,
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == inlineWord);
   FCITX_ASSERT(send(context, "Page_Down"));
   list = context.inputPanel().candidateList();
-  FCITX_ASSERT(list && list->candidate(1).text().toString() == "クリック六");
+  FCITX_ASSERT(list && list->candidate(1).text().stringAt(0) == "クリック六");
   list->candidate(1).select(&context);
   FCITX_ASSERT(context.commits.back() == "クリック六");
 
@@ -345,7 +346,7 @@ void verifyDelayedCandidates(Instance &instance, InputMethodEngine &engine,
   auto paged = std::dynamic_pointer_cast<CommonCandidateList>(context.inputPanel().candidateList());
   FCITX_ASSERT(paged);
   paged->next();
-  const auto scrolled = paged->candidate(paged->cursorIndex()).text().toString();
+  const auto scrolled = paged->candidate(paged->cursorIndex()).text().stringAt(0);
   send(context, "Return");
   FCITX_ASSERT(context.commits.back() == scrolled);
 
@@ -440,7 +441,12 @@ void verify(Instance &instance) {
   FCITX_ASSERT(list && list->size() == 3)
       << "preedit=" << first.inputPanel().clientPreedit().toString()
       << " size=" << (list ? list->size() : -1);
-  FCITX_ASSERT(list->candidate(1).text().toString() == "感じ");
+  FCITX_ASSERT(list->candidate(1).text().stringAt(0) == "感じ");
+#if TGSKK_FCITX_HAS_COMMENT
+  FCITX_ASSERT(list->candidate(1).comment().toString() == "感覚");
+#else
+  FCITX_ASSERT(list->candidate(1).text().toString() == "感じ 感覚");
+#endif
   FCITX_ASSERT(!send(first, "a", true));
   FCITX_ASSERT(first.inputPanel().clientPreedit().toString() == "▼漢字");
   sequence(first, "Down Return");
@@ -454,7 +460,7 @@ void verify(Instance &instance) {
 
   sequence(first, "K a n j i space");
   list = first.inputPanel().candidateList();
-  const auto clicked = list->candidate(2).text().toString();
+  const auto clicked = list->candidate(2).text().stringAt(0);
   list->candidate(2).select(&first);
   FCITX_ASSERT(first.commits.back() == clicked);
 
@@ -485,15 +491,15 @@ void verify(Instance &instance) {
   stale->candidate(0).select(&first);
   FCITX_ASSERT(first.commits.size() == commitsBefore);
   const auto nextChoice =
-      first.inputPanel().candidateList()->candidate(1).text().toString();
+      first.inputPanel().candidateList()->candidate(1).text().stringAt(0);
   sequence(first, "Down Return");
   FCITX_ASSERT(first.commits.size() == commitsBefore + 1);
   FCITX_ASSERT(first.commits.back() == nextChoice);
 
   sequence(first, "T e s u t o space Page_Down");
   list = first.inputPanel().candidateList();
-  FCITX_ASSERT(list && list->candidate(0).text().toString() == "候補八");
-  const auto pageChoice = list->candidate(0).text().toString();
+  FCITX_ASSERT(list && list->candidate(0).text().stringAt(0) == "候補八");
+  const auto pageChoice = list->candidate(0).text().stringAt(0);
   sequence(first, "1");
   FCITX_ASSERT(first.commits.back() == pageChoice);
 
@@ -503,7 +509,7 @@ void verify(Instance &instance) {
   FCITX_ASSERT(paged);
   paged->next();
   const auto scrollChoice =
-      paged->candidate(paged->cursorIndex()).text().toString();
+      paged->candidate(paged->cursorIndex()).text().stringAt(0);
   sequence(first, "Return");
   FCITX_ASSERT(first.commits.back() == scrollChoice);
 
@@ -513,7 +519,7 @@ void verify(Instance &instance) {
       first.inputPanel().candidateList());
   FCITX_ASSERT(bounds);
   const auto lastChoice =
-      bounds->candidateFromAll(bounds->totalSize() - 1).text().toString();
+      bounds->candidateFromAll(bounds->totalSize() - 1).text().stringAt(0);
   for (int i = 0; i < 12; ++i) {
     send(first, "Down");
   }
@@ -542,7 +548,11 @@ void verify(Instance &instance) {
   FCITX_ASSERT(
       engine->subModeLabel(InputMethodEntry("tgskk", "tgskk", "ja", "tgskk"),
                            first) == "ア");
+#if TGSKK_FCITX_HAS_OVERLAY
   FCITX_ASSERT(first.inputPanel().overlayMessage().toString() == "ア");
+#else
+  FCITX_ASSERT(first.inputPanel().auxUp().toString().find("ア") != std::string::npos);
+#endif
   sequence(first, "a");
   FCITX_ASSERT(!send(first, "Control+c"));
   sequence(first, "K a n j");
@@ -579,7 +589,7 @@ void verify(Instance &instance) {
     auto candidates = first.inputPanel().candidateList();
     FCITX_ASSERT(candidates);
     for (int index = 0; index < candidates->size(); ++index) {
-      if (candidates->candidate(index).text().toString() == text) {
+      if (candidates->candidate(index).text().stringAt(0) == text) {
         candidates->candidate(index).select(&first);
         return;
       }
@@ -609,10 +619,10 @@ void verify(Instance &instance) {
   sequence(first, "K a n j i space");
   FCITX_ASSERT(first.inputPanel().clientPreedit().toString() == "▼" + learned);
   auto afterReplacement = first.inputPanel().candidateList();
-  const auto recovered = afterReplacement->candidate(1).text().toString();
+  const auto recovered = afterReplacement->candidate(1).text().stringAt(0);
   afterReplacement->candidate(1).select(&first);
   const auto userPath =
-      StandardPaths::global().userDirectory(StandardPathsType::PkgData) /
+      tgskk::userDataDirectory() /
       "tgskk/SKK-JISYO.user";
   FCITX_ASSERT(std::filesystem::remove(userPath));
   engine->save();
@@ -680,7 +690,12 @@ void verifyZenz(Instance &instance) {
     send(context, "space");
     return context.inputPanel().clientPreedit().toString();
   };
-  const auto station = convert("駅で", true);
+  auto station = convert("駅で", true);
+  const auto readyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (station != "▼汽車" && std::chrono::steady_clock::now() < readyDeadline) {
+    context.reset();
+    station = convert("駅で", true);
+  }
   FCITX_ASSERT(station == "▼汽車") << "preedit=" << station << " aux=" << context.inputPanel().auxUp().toString();
   FCITX_ASSERT(context.inputPanel().auxUp().toString() == "AI-ranked");
   context.reset();
@@ -808,17 +823,21 @@ int main() {
   const std::filesystem::path root(path);
   setenv("SKIP_FCITX_PATH", "1", 1);
   setenv("FCITX_ADDON_DIRS",
-         (std::string(TGSKK_BUILD_DIR) + ":" +
-          StandardPaths::fcitxPath("addondir").string())
+         ((std::getenv("TGSKK_TEST_INSTALLED") ? std::string() : std::string(TGSKK_BUILD_DIR) + ":") +
+          tgskk::systemPath("addondir").string())
              .c_str(),
          1);
   setenv("FCITX_DATA_DIRS",
-         (std::string(TGSKK_BUILD_DIR) +
-          "/test-data:" + StandardPaths::fcitxPath("pkgdatadir").string())
+         ((std::getenv("TGSKK_TEST_INSTALLED") ? std::string() : std::string(TGSKK_BUILD_DIR) + "/test-data:") +
+          tgskk::systemPath("pkgdatadir").string())
              .c_str(),
          1);
   setenv("FCITX_CONFIG_HOME", (root / "config").c_str(), 1);
   setenv("FCITX_DATA_HOME", (root / "data").c_str(), 1);
+  if (const char *model = std::getenv("TGSKK_TEST_USER_MODEL")) {
+    std::filesystem::create_directories(root / "data/tgskk");
+    std::filesystem::copy_file(model, root / "data/tgskk" / std::filesystem::path(TGSKK_ZENZ_MODEL).filename());
+  }
   std::filesystem::create_directories(root / "config/conf");
   std::ofstream dictionary(root / "SKK-JISYO.utf8");
   std::ifstream demo(TGSKK_SOURCE_DIR "/examples/SKK-JISYO.demo.utf8");
@@ -844,7 +863,9 @@ int main() {
     StaticAddonRegistry registry{{"keyboard", &keyboard}};
     Instance instance(3, argv);
     instance.addonManager().registerDefaultLoader(&registry);
-    instance.eventDispatcher().schedule([&instance]() {
+    EventDispatcher dispatcher;
+    dispatcher.attach(&instance.eventLoop());
+    dispatcher.schedule([&instance]() {
       verify(instance);
       instance.exit();
     });

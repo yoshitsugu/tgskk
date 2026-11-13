@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "tgskk.h"
+#include "paths.h"
+#include "tgskk-features.h"
 
 #include <fcitx-config/configuration.h>
 #include <fcitx-config/iniparser.h>
 #include <fcitx-config/option.h>
 #include <fcitx-utils/capabilityflags.h>
 #include <fcitx-utils/log.h>
-#include <fcitx-utils/standardpaths.h>
 #include <fcitx-utils/textformatflags.h>
 #include <fcitx-utils/utf8.h>
 #include <fcitx/addonfactory.h>
@@ -91,6 +92,14 @@ std::string takeError(char *message) {
   return result;
 }
 
+std::string modelPath(const std::string &configured) {
+  if (configured != TGSKK_ZENZ_MODEL) { return configured; }
+  const auto userModel = tgskk::userDataDirectory() / "tgskk" /
+                         std::filesystem::path(TGSKK_ZENZ_MODEL).filename();
+  std::error_code error;
+  return std::filesystem::is_regular_file(userModel, error) ? userModel.string() : configured;
+}
+
 class TgskkState : public InputContextProperty {
 public:
   Session session{nullptr, tgskk_session_free};
@@ -114,7 +123,13 @@ public:
       : CandidateWord(Text(text)), engine_(engine), index_(index),
         generation_(generation) {
     if (annotation) {
+#if TGSKK_FCITX_HAS_COMMENT
       setComment(Text(annotation));
+#else
+      Text display(text);
+      display.append(" " + std::string(annotation), TextFormatFlag::Italic);
+      setText(std::move(display));
+#endif
     }
   }
   void select(InputContext *ic) const override;
@@ -241,7 +256,7 @@ public:
       }
     }
     if (!state->session) {
-      instance_->showCustomInputMethodInformation(ic, "tgskk: " + error_);
+      showInformation(ic, "tgskk: " + error_);
       return;
     }
     render(ic, tgskk_session_view(state->session.get()), false, false);
@@ -300,6 +315,20 @@ public:
   }
 
 private:
+  void showInformation(InputContext *ic, const std::string &message, [[maybe_unused]] bool mode = false) {
+#if TGSKK_FCITX_HAS_CUSTOM_INFORMATION
+    instance_->showCustomInputMethodInformation(ic, message);
+#else
+    // Older fcitx displays the engine's sub-mode label with its own timeout.
+    if (mode) {
+      instance_->showInputMethodInformation(ic);
+    } else {
+      ic->inputPanel().setAuxUp(Text(message));
+      ic->updateUserInterface(UserInterfaceComponent::InputPanel);
+    }
+#endif
+  }
+
   void movePage(InputContext *ic, const TgskkView *view,
                 const CommonCandidateList &list, bool forward, bool registerAtEnd) {
     auto *state = ic->propertyFor(&factory_);
@@ -392,7 +421,7 @@ private:
         return;
       }
       auto userPath =
-          StandardPaths::global().userDirectory(StandardPathsType::PkgData) /
+          tgskk::userDataDirectory() /
           "tgskk/SKK-JISYO.user";
       std::error_code ec;
       std::filesystem::create_directories(userPath.parent_path(), ec);
@@ -436,7 +465,8 @@ private:
       zenz_.reset();
       if (*config_.zenzEnabled) {
         char *error = nullptr;
-        zenz_.reset(tgskk_zenz_new(TGSKK_ZENZ_WORKER, config_.zenzModel->c_str(), &error));
+        const auto model = modelPath(*config_.zenzModel);
+        zenz_.reset(tgskk_zenz_new(TGSKK_ZENZ_WORKER, model.c_str(), &error));
         if (!zenz_) { FCITX_ERROR() << "tgskk: " << takeError(error); }
       }
       instance_->inputContextManager().foreach ([this](InputContext *ic) {
@@ -503,7 +533,7 @@ private:
     ic->updateUserInterface(UserInterfaceComponent::InputPanel);
     ic->updateUserInterface(UserInterfaceComponent::StatusArea);
     if (ic->hasFocus()) {
-      instance_->showCustomInputMethodInformation(ic, "tgskk: " + message);
+      showInformation(ic, "tgskk: " + message);
     }
   }
 
@@ -562,7 +592,7 @@ private:
     if (view->mode_changed) {
       ic->updateUserInterface(UserInterfaceComponent::StatusArea);
       if (showMode && *config_.modeIndicator && ic->hasFocus()) {
-        instance_->showCustomInputMethodInformation(ic, view->mode_label);
+        showInformation(ic, view->mode_label, true);
       }
     }
   }
@@ -592,4 +622,8 @@ class TgskkFactory : public AddonFactory {
 };
 } // namespace
 
+#ifdef FCITX_ADDON_FACTORY_V2
 FCITX_ADDON_FACTORY_V2(tgskk, TgskkFactory)
+#else
+FCITX_ADDON_FACTORY(TgskkFactory)
+#endif
