@@ -413,6 +413,69 @@ struct RegistrationGuard {
                  stderr);
   }
 };
+class CapturingFactory final : public IClassFactory {
+  std::atomic<ULONG> refs{1};
+  IClassFactory *target;
+
+public:
+  ITfKeyEventSink *sink = nullptr;
+  explicit CapturingFactory(IClassFactory *value) : target(value) {}
+  ~CapturingFactory() {
+    if (sink)
+      sink->Release();
+    target->Release();
+  }
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
+    if (!out)
+      return E_POINTER;
+    *out = nullptr;
+    if (id != IID_IUnknown && id != IID_IClassFactory)
+      return E_NOINTERFACE;
+    *out = static_cast<IClassFactory *>(this);
+    AddRef();
+    return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+  ULONG STDMETHODCALLTYPE Release() override {
+    const auto count = --refs;
+    if (!count)
+      delete this;
+    return count;
+  }
+  HRESULT STDMETHODCALLTYPE CreateInstance(IUnknown *outer, REFIID id,
+                                           void **out) override {
+    const auto result = target->CreateInstance(outer, id, out);
+    if (SUCCEEDED(result)) {
+      if (sink)
+        sink->Release();
+      sink = nullptr;
+      static_cast<IUnknown *>(*out)->QueryInterface(
+          IID_ITfKeyEventSink, reinterpret_cast<void **>(&sink));
+    }
+    return result;
+  }
+  HRESULT STDMETHODCALLTYPE LockServer(BOOL lock) override {
+    return target->LockServer(lock);
+  }
+};
+struct CaptureRegistration {
+  CapturingFactory *factory = nullptr;
+  DWORD cookie = 0;
+  HRESULT close() {
+    if (cookie) {
+      const auto result = CoRevokeClassObject(cookie);
+      if (FAILED(result))
+        return result;
+      cookie = 0;
+    }
+    if (factory) {
+      factory->Release();
+      factory = nullptr;
+    }
+    return S_OK;
+  }
+  ~CaptureRegistration() { close(); }
+};
 std::atomic<bool> refusalProbeAlive = false;
 class RefusalProbe final : public ITfEditSession, public ITfCompositionSink {
   ULONG refs = 1;
@@ -550,43 +613,13 @@ int run(int argc, char **argv) {
       "associate window focus");
   require(SUCCEEDED(getFactory(serviceId, IID_IClassFactory,
                                reinterpret_cast<void **>(&factory))),
-          "direct key test factory");
-  require(
-      SUCCEEDED(factory->CreateInstance(nullptr, IID_ITfTextInputProcessorEx,
-                                        reinterpret_cast<void **>(&service))),
-      "direct key test service");
-  factory->Release();
-  require(SUCCEEDED(service->ActivateEx(manager, id, 0)),
-          "direct key test activation");
-  ITfKeyEventSink *direct = nullptr;
-  require(SUCCEEDED(service->QueryInterface(
-              IID_ITfKeyEventSink, reinterpret_cast<void **>(&direct))),
-          "direct key sink");
-  BYTE controlState[256] = {};
-  controlState[VK_CONTROL] = controlState[VK_LCONTROL] = 0x80;
-  require(SetKeyboardState(controlState), "direct control key state");
-  const LPARAM controlScan = 1 | (MapVirtualKeyW('C', MAPVK_VK_TO_VSC) << 16);
-  BOOL eligible = TRUE, consumed = TRUE;
-  require(
-      SUCCEEDED(direct->OnTestKeyDown(context, 'C', controlScan, &eligible)) &&
-          !eligible,
-      "Ctrl+C was eligible");
-  const auto beforeShortcut = store->startedCompositions;
-  store->refuseComposition = true;
-  require(SUCCEEDED(direct->OnKeyDown(context, 'C', controlScan, &consumed)) &&
-              !consumed,
-          "direct Ctrl+C was consumed");
-  require(store->startedCompositions == beforeShortcut,
-          "unhandled key started a composition");
-  require(store->text.empty(), "unhandled key changed document");
-  store->refuseComposition = false;
-  direct->Release();
-  require(SUCCEEDED(service->Deactivate()), "direct key test deactivation");
-  service->Release();
-  service = nullptr;
-  require(unload() == S_OK, "direct key test retained COM objects");
-  BYTE clearState[256] = {};
-  require(SetKeyboardState(clearState), "restore key state");
+          "capturing factory target");
+  CaptureRegistration captured;
+  captured.factory = new CapturingFactory(factory);
+  require(SUCCEEDED(CoRegisterClassObject(
+              serviceId, captured.factory, CLSCTX_INPROC_SERVER,
+              REGCLS_MULTIPLEUSE, &captured.cookie)),
+          "capturing factory registration");
   GUID profileId = {0x70c846ab,
                     0x9fb5,
                     0x43cb,
@@ -627,6 +660,29 @@ int run(int argc, char **argv) {
   require(SUCCEEDED(manager->QueryInterface(IID_ITfKeystrokeMgr,
                                             reinterpret_cast<void **>(&keys))),
           "key routing");
+  ITfKeyEventSink *direct = captured.factory->sink;
+  require(direct != nullptr, "capture active TSF key sink");
+  BYTE controlState[256] = {};
+  controlState[VK_CONTROL] = controlState[VK_LCONTROL] = 0x80;
+  require(SetKeyboardState(controlState), "direct control key state");
+  const LPARAM controlScan = 1 | (MapVirtualKeyW('C', MAPVK_VK_TO_VSC) << 16);
+  BOOL eligible = TRUE, consumed = TRUE;
+  require(
+      SUCCEEDED(direct->OnTestKeyDown(context, 'C', controlScan, &eligible)) &&
+          !eligible,
+      "Ctrl+C was eligible");
+  const auto beforeShortcut = store->startedCompositions;
+  store->refuseComposition = true;
+  require(SUCCEEDED(direct->OnKeyDown(context, 'C', controlScan, &consumed)) &&
+              !consumed,
+          "direct Ctrl+C was consumed");
+  require(store->startedCompositions == beforeShortcut,
+          "unhandled key started a composition");
+  require(store->text.empty(), "unhandled key changed document");
+  store->refuseComposition = false;
+  require(SUCCEEDED(captured.close()), "revoke capturing factory");
+  BYTE clearState[256] = {};
+  require(SetKeyboardState(clearState), "restore key state");
   auto key = [&](UINT code, bool shift = false, bool win = false) {
     BYTE state[256] = {};
     if (shift)
