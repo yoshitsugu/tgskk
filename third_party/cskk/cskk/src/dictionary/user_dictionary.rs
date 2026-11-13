@@ -5,9 +5,11 @@ use crate::error::CskkError;
 use crate::error::CskkError::Error;
 use encoding_rs::{Encoder, EncoderResult, Encoding};
 use lru_ordered_map::LruOrderedMap;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tempfile::NamedTempFile;
 
 ///
@@ -23,11 +25,18 @@ pub(crate) struct UserDictionary {
     okuri_nashi_dictionary: LruOrderedMap<String, DictEntry>,
     // Just bool, because we know this is under mutex.
     has_change: bool,
+    identity: u64,
+    revision: u64,
+    pending: Option<BTreeMap<(bool, String), (u64, DictEntry)>>,
 }
 
 const BUF_SIZE: usize = 1024;
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 impl UserDictionary {
+    pub(crate) fn has_unsaved_changes(&self) -> bool {
+        self.has_change
+    }
     pub(crate) fn new(file_path: &str, encode: &str) -> Result<Self, CskkError> {
         let dictionary = load_dictionary(file_path, encode.as_bytes())?;
 
@@ -37,7 +46,143 @@ impl UserDictionary {
             okuri_ari_dictionary: dictionary.okuri_ari,
             okuri_nashi_dictionary: dictionary.okuri_nashi,
             has_change: false,
+            identity: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            revision: 0,
+            pending: None,
         })
+    }
+}
+
+/// A transferable initial image; the LRU map itself contains thread-local Rc.
+pub struct DictionarySaveSeed {
+    path: String,
+    encode: String,
+    identity: u64,
+    revision: u64,
+    dirty: bool,
+    ari: Vec<(String, DictEntry)>,
+    nashi: Vec<(String, DictEntry)>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SaveVersion {
+    identity: u64,
+    revision: u64,
+}
+pub struct DictionaryUpdates {
+    version: SaveVersion,
+    entries: BTreeMap<(bool, String), (u64, DictEntry)>,
+}
+impl DictionaryUpdates {
+    pub fn version(&self) -> SaveVersion {
+        self.version
+    }
+}
+/// Construct and use on the disk writer thread; never move its LRU maps.
+pub struct DictionaryWriter(UserDictionary);
+impl DictionarySaveSeed {
+    pub fn writer(self) -> DictionaryWriter {
+        let mut dictionary = UserDictionary {
+            file_path: self.path,
+            encode: self.encode,
+            identity: self.identity,
+            revision: self.revision,
+            has_change: self.dirty,
+            pending: None,
+            okuri_ari_dictionary: LruOrderedMap::new(),
+            okuri_nashi_dictionary: LruOrderedMap::new(),
+        };
+        for (key, entry) in self.ari.into_iter().rev() {
+            dictionary.okuri_ari_dictionary.push(key, entry);
+        }
+        for (key, entry) in self.nashi.into_iter().rev() {
+            dictionary.okuri_nashi_dictionary.push(key, entry);
+        }
+        DictionaryWriter(dictionary)
+    }
+}
+impl DictionaryWriter {
+    pub fn apply_and_save(&mut self, updates: DictionaryUpdates) -> Result<(), CskkError> {
+        if updates.version.identity != self.0.identity {
+            return Err(Error("Updates belong to another dictionary".into()));
+        }
+        if updates.version.revision < self.0.revision {
+            return Err(Error("Save updates are out of order".into()));
+        }
+        self.0.revision = updates.version.revision;
+        let mut entries: Vec<_> = updates.entries.into_iter().collect();
+        entries.sort_by_key(|(_, (revision, _))| *revision);
+        for ((okuri, key), (_, entry)) in entries {
+            let dictionary = if okuri {
+                &mut self.0.okuri_ari_dictionary
+            } else {
+                &mut self.0.okuri_nashi_dictionary
+            };
+            dictionary.push(key, entry);
+            self.0.has_change = true;
+        }
+        self.0.save_dictionary()?;
+        Ok(())
+    }
+}
+impl UserDictionary {
+    pub(crate) fn start_save_stream(&mut self) -> Result<DictionarySaveSeed, CskkError> {
+        if self.pending.is_some() {
+            return Err(Error("A dictionary save stream is already active".into()));
+        }
+        let entries = |map: &LruOrderedMap<String, DictEntry>| {
+            map.iter_lru()
+                .filter_map(|(key, entry)| Some(((***key.as_ref()?).to_owned(), entry?.clone())))
+                .collect()
+        };
+        let seed = DictionarySaveSeed {
+            path: self.file_path.clone(),
+            encode: self.encode.clone(),
+            identity: self.identity,
+            revision: self.revision,
+            dirty: self.has_change,
+            ari: entries(&self.okuri_ari_dictionary),
+            nashi: entries(&self.okuri_nashi_dictionary),
+        };
+        self.pending = Some(BTreeMap::new());
+        Ok(seed)
+    }
+    pub(crate) fn take_updates(&mut self) -> Option<DictionaryUpdates> {
+        if !self.has_change {
+            return None;
+        }
+        Some(DictionaryUpdates {
+            version: SaveVersion {
+                identity: self.identity,
+                revision: self.revision,
+            },
+            entries: std::mem::take(self.pending.as_mut()?),
+        })
+    }
+    pub(crate) fn acknowledge_save(&mut self, version: SaveVersion) -> Result<(), CskkError> {
+        if version.identity != self.identity {
+            return Err(Error("Save belongs to another dictionary".into()));
+        }
+        if version.revision == self.revision {
+            self.has_change = false;
+        }
+        Ok(())
+    }
+    pub(crate) fn stop_save_stream(&mut self) {
+        self.pending = None;
+    }
+    fn record_update(&mut self, okuri: bool, key: &String) {
+        self.has_change = true;
+        self.revision = self.revision.wrapping_add(1);
+        if let Some(pending) = &mut self.pending {
+            let dictionary = if okuri {
+                &self.okuri_ari_dictionary
+            } else {
+                &self.okuri_nashi_dictionary
+            };
+            if let Some(entry) = dictionary.peek(key) {
+                pending.insert((okuri, key.to_owned()), (self.revision, entry.clone()));
+            }
+        }
     }
 }
 
@@ -67,6 +212,9 @@ impl Dictionary for UserDictionary {
     /// 辞書ファイルのフォーマットは SKK 16.2 user manual 5.10.7 辞書の書式 に依る
     /// userdictなので送りありエントリも送りなしエントリも最近使用した順に並ぶ。
     fn save_dictionary(&mut self) -> Result<bool, CskkError> {
+        if self.pending.is_some() {
+            return Err(Error("Use the active background saver".into()));
+        }
         if self.has_change {
             let parent = Path::new(&self.file_path)
                 .parent()
@@ -157,7 +305,7 @@ impl Dictionary for UserDictionary {
                 );
             }
         }
-        self.has_change = true;
+        self.record_update(candidate.okuri, midashi);
         Ok(true)
     }
 
@@ -175,12 +323,15 @@ impl Dictionary for UserDictionary {
         let entry = dictionary.get_mut(midashi);
         if let Some(dict_entry) = entry {
             dict_entry.remove_matching_candidate(composite_key, candidate);
+            self.record_update(composite_key.has_okuri(), midashi);
         }
-        self.has_change = true;
         Ok(true)
     }
 
     fn reload(&mut self) -> Result<(), CskkError> {
+        if self.pending.is_some() {
+            return Err(Error("Stop background saving before reload".into()));
+        }
         FileDictionary::reload(self)
     }
 }

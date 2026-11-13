@@ -66,18 +66,23 @@ impl<F: FnMut(&ConversionRequest) -> ConversionResponse> ConversionProvider for 
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum MissingConversionResponse {
+    Ready(ConversionResponse),
+    Pending,
+}
 /// Called only when a nonempty reading produced no local dictionary candidates
 /// and an actual conversion is starting. Unlike [`ConversionProvider`], an
 /// implementation may wait for a bounded background result (for example a
 /// short network lookup under the caller's deadline) because this is never
 /// reached by preview or completion while typing, and never by a local hit.
 pub trait MissingConversionProvider {
-    fn prepare(&mut self, request: &ConversionRequest) -> ConversionResponse;
+    fn prepare(&mut self, request: &ConversionRequest) -> MissingConversionResponse;
 }
 
 impl<F: FnMut(&ConversionRequest) -> ConversionResponse> MissingConversionProvider for F {
-    fn prepare(&mut self, request: &ConversionRequest) -> ConversionResponse {
-        self(request)
+    fn prepare(&mut self, request: &ConversionRequest) -> MissingConversionResponse {
+        MissingConversionResponse::Ready(self(request))
     }
 }
 

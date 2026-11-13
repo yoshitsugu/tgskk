@@ -1,11 +1,14 @@
 use super::{TgskkSession, diagnostic, report, string_arg};
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
+use std::rc::Rc;
 use std::time::Duration;
 use tgskk_core::input::{
     ConversionCandidate, ConversionRequest, ConversionResponse, LearningPolicy,
+    MissingConversionProvider, MissingConversionResponse,
 };
 use tgskk_skkserv::{Candidate, Config, Worker};
 
@@ -111,29 +114,14 @@ pub(super) unsafe extern "C" fn tgskk_session_set_skkserv(
     session.network_allowed.set(false);
     let result = catch_unwind(AssertUnwindSafe(|| {
         let provider = unsafe { server.as_ref() }.map(|server| {
-            let worker = server.worker.clone();
-            let source = server.source;
-            let wait = server.wait;
-            let allowed = session.network_allowed.clone();
-            Box::new(move |request: &ConversionRequest| {
-                if !allowed.get() {
-                    return ConversionResponse::default();
-                }
-                let Some(reading) = lookup_reading(request, source) else {
-                    return ConversionResponse::default();
-                };
-                let Ok(candidates) = worker.lookup(&reading, wait) else {
-                    return ConversionResponse::default();
-                };
-                let additional_candidates = convert_candidates(candidates, request, source);
-                let learning =
-                    (!additional_candidates.is_empty()).then_some(LearningPolicy::Always);
-                ConversionResponse {
-                    additional_candidates,
-                    learning,
-                    ..Default::default()
-                }
-            }) as Box<dyn tgskk_core::input::MissingConversionProvider>
+            Box::new(MissingLookup {
+                worker: server.worker.clone(),
+                source: server.source,
+                wait: server.wait,
+                allowed: session.network_allowed.clone(),
+                pending: session.lookup_pending.clone(),
+                defer: session.defer_missing.clone(),
+            }) as Box<dyn MissingConversionProvider>
         });
         session.input.set_missing_conversion_provider(provider);
     }));
@@ -142,6 +130,48 @@ pub(super) unsafe extern "C" fn tgskk_session_set_skkserv(
         return 0;
     }
     1
+}
+
+struct MissingLookup {
+    worker: Worker,
+    source: Source,
+    wait: Duration,
+    allowed: Rc<Cell<bool>>,
+    pending: Rc<Cell<bool>>,
+    defer: Rc<Cell<bool>>,
+}
+impl MissingConversionProvider for MissingLookup {
+    fn prepare(&mut self, request: &ConversionRequest) -> MissingConversionResponse {
+        let empty = || MissingConversionResponse::Ready(ConversionResponse::default());
+        if !self.allowed.get() {
+            return empty();
+        }
+        let Some(reading) = lookup_reading(request, self.source) else {
+            return empty();
+        };
+        let candidates = match self.worker.lookup(&reading, self.wait) {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                let pending = matches!(
+                    error,
+                    tgskk_skkserv::LookupError::Timeout | tgskk_skkserv::LookupError::Busy
+                );
+                self.pending.set(pending);
+                return if self.wait.is_zero() && self.defer.get() && pending {
+                    MissingConversionResponse::Pending
+                } else {
+                    empty()
+                };
+            }
+        };
+        let additional_candidates = convert_candidates(candidates, request, self.source);
+        let learning = (!additional_candidates.is_empty()).then_some(LearningPolicy::Always);
+        MissingConversionResponse::Ready(ConversionResponse {
+            additional_candidates,
+            learning,
+            ..Default::default()
+        })
+    }
 }
 
 fn lookup_reading(request: &ConversionRequest, source: Source) -> Option<String> {

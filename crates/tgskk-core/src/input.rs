@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use cskk::CskkContext;
 
-pub use cskk::{dictionary::CskkDictionary, error::CskkError};
+pub use cskk::{
+    dictionary::{CskkDictionary, DictionaryUpdates, SaveVersion},
+    error::CskkError,
+};
 
 pub use cskk::conversion::{
     ConversionCandidate, ConversionError, ConversionProvider, ConversionRequest,
-    ConversionResponse, LearningPolicy, MissingConversionProvider,
+    ConversionResponse, LearningPolicy, MissingConversionProvider, MissingConversionResponse,
 };
 pub use cskk::keyevent::CskkKeyEvent;
 pub use cskk::skk_modes::{CompositionMode, InputMode};
@@ -125,6 +128,12 @@ impl InputSession {
 
     pub fn input_mode(&self) -> InputMode {
         self.context.get_current_input_mode()
+    }
+    pub fn set_input_mode(&mut self, mode: InputMode) -> InputOutcome {
+        let before = self.input_mode();
+        cskk::skk_context_reset_rs(&mut self.context);
+        cskk::skk_context_set_input_mode_rs(&mut self.context, mode);
+        self.outcome(before, false)
     }
 
     pub fn mode_label(&self) -> &'static str {

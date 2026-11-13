@@ -25,6 +25,7 @@ use static_dict::StaticFileDict;
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use user_dictionary::UserDictionary;
+pub use user_dictionary::{DictionarySaveSeed, DictionaryUpdates, DictionaryWriter, SaveVersion};
 
 // C側に出す関係でSizedである必要があり、dyn Traitではなくenumでラップする。
 #[derive(Debug)]
@@ -42,6 +43,13 @@ pub struct CskkDictionary {
 }
 
 impl CskkDictionary {
+    pub fn has_unsaved_changes(&self) -> Result<bool, CskkError> {
+        let dictionary = self
+            .mutex
+            .lock()
+            .map_err(|_| CskkError::Error("Dictionary lock is poisoned".into()))?;
+        Ok(matches!(&*dictionary, CskkDictionaryType::UserFile(dict) if dict.has_unsaved_changes()))
+    }
     pub(crate) fn is_read_only(&self) -> bool {
         match &*self.mutex.lock().unwrap() {
             CskkDictionaryType::StaticFile(dictionary) => dictionary.is_read_only(),
@@ -60,6 +68,44 @@ impl CskkDictionary {
             CskkDictionaryType::StaticFile(dict) => dict.save_dictionary(),
             CskkDictionaryType::UserFile(dict) => dict.save_dictionary(),
             CskkDictionaryType::EmptyDict(dict) => dict.save_dictionary(),
+        }
+    }
+
+    pub fn start_save_stream(&self) -> Result<Option<DictionarySaveSeed>, CskkError> {
+        let mut dictionary = self
+            .mutex
+            .lock()
+            .map_err(|_| CskkError::Error("Dictionary lock is poisoned".into()))?;
+        match &mut *dictionary {
+            CskkDictionaryType::UserFile(dict) => dict.start_save_stream().map(Some),
+            _ => Ok(None),
+        }
+    }
+    pub fn take_save_updates(&self) -> Result<Option<DictionaryUpdates>, CskkError> {
+        let mut dictionary = self
+            .mutex
+            .lock()
+            .map_err(|_| CskkError::Error("Dictionary lock is poisoned".into()))?;
+        match &mut *dictionary {
+            CskkDictionaryType::UserFile(dict) => Ok(dict.take_updates()),
+            _ => Ok(None),
+        }
+    }
+    pub fn acknowledge_save(&self, version: SaveVersion) -> Result<(), CskkError> {
+        let mut dictionary = self
+            .mutex
+            .lock()
+            .map_err(|_| CskkError::Error("Dictionary lock is poisoned".into()))?;
+        match &mut *dictionary {
+            CskkDictionaryType::UserFile(dict) => dict.acknowledge_save(version),
+            _ => Err(CskkError::Error("Dictionary is not writable".into())),
+        }
+    }
+    pub fn stop_save_stream(&self) {
+        if let Ok(mut dictionary) = self.mutex.lock() {
+            if let CskkDictionaryType::UserFile(dict) = &mut *dictionary {
+                dict.stop_save_stream();
+            }
         }
     }
 

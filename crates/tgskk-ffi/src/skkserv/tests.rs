@@ -113,7 +113,7 @@ fn keys(session: &mut TgskkSession, trace: &str) {
         let (key, modifiers) = match token {
             "space" => (32, 0),
             "Return" => (0xff0d, 0),
-            "C-g" => (u32::from(b'g'), 4),
+            _ if token.starts_with("C-") && token.len() == 3 => (u32::from(token.as_bytes()[2]), 4),
             _ => (
                 u32::from(token.as_bytes()[0]),
                 u32::from(token.as_bytes()[0].is_ascii_uppercase()),
@@ -413,5 +413,122 @@ fn abi_rejects_invalid_settings_and_nulls_without_network() {
         assert_eq!(tgskk_session_set_skkserv(ptr::null_mut(), ptr::null()), 0);
         assert!(tgskk_skkserv_take_error(ptr::null()).is_null());
         tgskk_skkserv_free(ptr::null_mut());
+    }
+}
+
+#[test]
+fn zero_wait_missing_lookup_keeps_reading_until_explicit_retry() {
+    let server = Server::new("1/汽車/\n".as_bytes(), Duration::from_millis(80));
+    let handle = server.handle("utf-8", 0);
+    let mut input =
+        Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
+    unsafe {
+        tgskk_session_set_skkserv(&mut *input, handle);
+        crate::tgskk_session_defer_missing(&mut *input, 1);
+        tgskk_session_network_allowed(&mut *input, 1);
+    }
+    keys(&mut input, "K i s h a space");
+    assert_eq!(unsafe { crate::tgskk_session_lookup_pending(&*input) }, 1);
+    assert_eq!(preedit(&input), "▽きしゃ");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        unsafe {
+            tgskk_session_network_allowed(&mut *input, 1);
+        }
+        keys(&mut input, "space");
+        if unsafe { crate::tgskk_session_lookup_pending(&*input) } == 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::yield_now();
+    }
+    assert_eq!(preedit(&input), "▼汽車");
+    assert_eq!(server.count.load(Ordering::SeqCst), 1);
+    unsafe {
+        tgskk_skkserv_free(handle);
+    }
+}
+
+#[test]
+fn zero_wait_okuri_retains_the_stem_and_suffix_until_explicit_retry() {
+    let server = Server::new("1/書/\n".as_bytes(), Duration::from_millis(80));
+    let handle = server.handle("utf-8", 0);
+    let mut input =
+        Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
+    unsafe {
+        tgskk_session_set_skkserv(&mut *input, handle);
+        crate::tgskk_session_defer_missing(&mut *input, 1);
+        tgskk_session_network_allowed(&mut *input, 1);
+    }
+    keys(&mut input, "K a K u");
+    assert_eq!(unsafe { crate::tgskk_session_lookup_pending(&*input) }, 1);
+    assert_eq!(preedit(&input), "▽か*く");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        unsafe {
+            tgskk_session_network_allowed(&mut *input, 1);
+        }
+        keys(&mut input, "space");
+        if unsafe { crate::tgskk_session_lookup_pending(&*input) } == 0 {
+            break;
+        }
+        assert_eq!(preedit(&input), "▽か*く");
+        assert!(Instant::now() < deadline);
+        thread::yield_now();
+    }
+    assert_eq!(preedit(&input), "▼書く");
+    assert_eq!(
+        server
+            .requests
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap(),
+        "1かk ".as_bytes()
+    );
+    assert_eq!(server.count.load(Ordering::SeqCst), 1);
+    unsafe {
+        tgskk_skkserv_free(handle);
+    }
+}
+
+#[test]
+fn zero_wait_okuri_kana_confirmation_preserves_all_typed_kana() {
+    for (action, expected) in [("C-j", "かく"), ("q", "カク"), ("C-q", "ｶｸ")] {
+        let server = Server::new("1/書/\n".as_bytes(), Duration::from_millis(80));
+        let handle = server.handle("utf-8", 0);
+        let mut input =
+            Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
+        unsafe {
+            tgskk_session_set_skkserv(&mut *input, handle);
+            crate::tgskk_session_defer_missing(&mut *input, 1);
+            tgskk_session_network_allowed(&mut *input, 1);
+        }
+        keys(&mut input, "K a K u");
+        assert_eq!(preedit(&input), "▽か*く");
+        keys(&mut input, action);
+        assert_eq!(input.committed.to_str().unwrap(), expected, "{action}");
+        assert_eq!(preedit(&input), "", "{action}");
+        keys(&mut input, "a");
+        assert_eq!(input.committed.to_str().unwrap(), "あ", "{action}");
+        unsafe {
+            tgskk_skkserv_free(handle);
+        }
+    }
+}
+
+#[test]
+fn zero_wait_legacy_host_still_enters_registration_without_opt_in() {
+    let server = Server::new("1/汽車/\n".as_bytes(), Duration::from_millis(80));
+    let handle = server.handle("utf-8", 0);
+    let mut input =
+        Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
+    unsafe {
+        tgskk_session_set_skkserv(&mut *input, handle);
+        tgskk_session_network_allowed(&mut *input, 1);
+    }
+    keys(&mut input, "K i s h a space");
+    assert_eq!(preedit(&input), "▼きしゃ【】");
+    assert_eq!(unsafe { crate::tgskk_session_lookup_pending(&*input) }, 1);
+    unsafe {
+        tgskk_skkserv_free(handle);
     }
 }
