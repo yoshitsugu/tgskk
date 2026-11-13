@@ -258,12 +258,13 @@ mod test {
     }
     use encoding_rs_io::DecodeReaderBytesBuilder;
     use std::io::{BufRead, BufReader};
-    use tempfile::NamedTempFile;
 
     #[test]
     fn userdict() -> Result<(), CskkError> {
-        let file = NamedTempFile::new()?;
-        let filename = file.path().to_str().unwrap();
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("SKK-JISYO.user");
+        File::create(&file)?;
+        let filename = file.to_str().unwrap();
         let mut user_dictionary = UserDictionary::new(filename, "utf-8")?;
         let candidate = Candidate::new(
             "あああ".to_string(),
@@ -284,8 +285,10 @@ mod test {
     /// Recent select_candidate の順序になっているか
     #[test]
     fn userdict_ordering() -> Result<(), CskkError> {
-        let file = NamedTempFile::new()?;
-        let filename = file.path().to_str().unwrap();
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("SKK-JISYO.user");
+        File::create(&file)?;
+        let filename = file.to_str().unwrap();
         let mut user_dictionary = UserDictionary::new(filename, "utf-8")?;
         let candidate = Candidate::new(
             "あ".to_string(),

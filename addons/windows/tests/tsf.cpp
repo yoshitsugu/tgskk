@@ -683,6 +683,8 @@ int run(int argc, char **argv) {
   require(SUCCEEDED(manager->SetFocus(emptyDocument)),
           "cleanup selection failure focus");
   pump();
+  require(!store->failSelectionAfterWrite && store->failSelection,
+          "cleanup did not reach the post-write selection fault");
   require(store->endedCompositions == beforeCleanup + 1,
           "selection failure prevented composition termination");
   if (!store->text.empty()) {
