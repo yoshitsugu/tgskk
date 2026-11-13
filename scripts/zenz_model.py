@@ -59,7 +59,7 @@ def main():
     except (OSError, RuntimeError) as error:
         parser.exit(1, f"tgskk-setup-model: {error}\n")
     print(f"Verified model: {model}")
-    print("Restart fcitx5 to load the model. For a custom directory, set ZenzModel to this path.")
+    print("Restart fcitx5 or IBus to load the model. For a custom directory, set ZenzModel to this path.")
 
 
 if __name__ == "__main__":
