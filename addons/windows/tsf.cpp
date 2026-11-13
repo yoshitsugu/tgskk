@@ -372,68 +372,79 @@ public:
                                        DWORD flags) override {
     if (manager)
       return E_UNEXPECTED;
-    if (flags & 6)
+    if (flags & (TF_TMAE_SECUREMODE | TF_TMAE_UIELEMENTENABLEDONLY))
       return E_ACCESSDENIED;
-    auto moduleFile = modulePath();
-    if (moduleFile.empty())
-      return E_FAIL;
-    std::wstring path =
-        (std::filesystem::path(moduleFile).parent_path() / L"SKK-JISYO.L")
-            .wstring();
-    wchar_t configured[32768];
-    DWORD n = GetEnvironmentVariableW(L"TGSKK_DICTIONARY", configured, 32768);
-    if (n >= 32768)
-      return E_INVALIDARG;
-    if (n)
-      path.assign(configured, n);
-    char *error = nullptr;
-    runtime = tgskk_runtime_new(utf8(path).c_str(), "euc-jp", nullptr, &error);
-    tgskk_string_free(error);
-    if (!runtime)
-      return E_FAIL;
-    session = tgskk_session_new(runtime, &error);
-    tgskk_string_free(error);
-    if (!session) {
-      tgskk_runtime_free(runtime);
-      runtime = nullptr;
-      return E_FAIL;
-    }
-    manager = value;
-    manager->AddRef();
-    client = id;
-    ITfKeystrokeMgr *keys = nullptr;
-    HRESULT result = manager->QueryInterface(IID_ITfKeystrokeMgr,
-                                             reinterpret_cast<void **>(&keys));
-    if (SUCCEEDED(result)) {
-      result = keys->AdviseKeyEventSink(client, this, TRUE);
-      release(keys);
-    }
-    if (FAILED(result)) {
+    try {
+      auto moduleFile = modulePath();
+      if (moduleFile.empty())
+        return E_FAIL;
+      std::wstring path =
+          (std::filesystem::path(moduleFile).parent_path() / L"SKK-JISYO.L")
+              .wstring();
+      wchar_t configured[32768];
+      DWORD n = GetEnvironmentVariableW(L"TGSKK_DICTIONARY", configured, 32768);
+      if (n >= 32768)
+        return E_INVALIDARG;
+      if (n)
+        path.assign(configured, n);
+      char *error = nullptr;
+      runtime =
+          tgskk_runtime_new(utf8(path).c_str(), "euc-jp", nullptr, &error);
+      tgskk_string_free(error);
+      if (!runtime)
+        return E_FAIL;
+      session = tgskk_session_new(runtime, &error);
+      tgskk_string_free(error);
+      if (!session) {
+        tgskk_runtime_free(runtime);
+        runtime = nullptr;
+        return E_FAIL;
+      }
+      manager = value;
+      manager->AddRef();
+      client = id;
+      ITfKeystrokeMgr *keys = nullptr;
+      HRESULT result = manager->QueryInterface(
+          IID_ITfKeystrokeMgr, reinterpret_cast<void **>(&keys));
+      if (SUCCEEDED(result)) {
+        result = keys->AdviseKeyEventSink(client, this, TRUE);
+        release(keys);
+      }
+      if (FAILED(result)) {
+        Deactivate();
+        return result;
+      }
+      ITfSource *source = nullptr;
+      result = manager->QueryInterface(IID_ITfSource,
+                                       reinterpret_cast<void **>(&source));
+      if (SUCCEEDED(result)) {
+        result = source->AdviseSink(IID_ITfThreadMgrEventSink,
+                                    static_cast<ITfThreadMgrEventSink *>(this),
+                                    &threadCookie);
+        if (SUCCEEDED(result))
+          result = source->AdviseSink(IID_ITfThreadFocusSink,
+                                      static_cast<ITfThreadFocusSink *>(this),
+                                      &focusCookie);
+        release(source);
+      }
+      if (FAILED(result)) {
+        Deactivate();
+        return result;
+      }
+      candidates =
+          CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+                          L"STATIC", L"", WS_POPUP | WS_BORDER | SS_LEFT, 0, 0,
+                          300, 200, nullptr, nullptr, module, nullptr);
+      if (!candidates) {
+        const HRESULT error = HRESULT_FROM_WIN32(GetLastError());
+        Deactivate();
+        return FAILED(error) ? error : E_FAIL;
+      }
+      return S_OK;
+    } catch (...) {
       Deactivate();
-      return result;
+      return E_OUTOFMEMORY;
     }
-    ITfSource *source = nullptr;
-    result = manager->QueryInterface(IID_ITfSource,
-                                     reinterpret_cast<void **>(&source));
-    if (SUCCEEDED(result)) {
-      result = source->AdviseSink(IID_ITfThreadMgrEventSink,
-                                  static_cast<ITfThreadMgrEventSink *>(this),
-                                  &threadCookie);
-      if (SUCCEEDED(result))
-        result = source->AdviseSink(IID_ITfThreadFocusSink,
-                                    static_cast<ITfThreadFocusSink *>(this),
-                                    &focusCookie);
-      release(source);
-    }
-    if (FAILED(result)) {
-      Deactivate();
-      return result;
-    }
-    candidates =
-        CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
-                        L"STATIC", L"", WS_POPUP | WS_BORDER | SS_LEFT, 0, 0,
-                        300, 200, nullptr, nullptr, module, nullptr);
-    return S_OK;
   }
   HRESULT STDMETHODCALLTYPE Deactivate() override {
     bool ended = abandon();
@@ -873,23 +884,42 @@ public:
     return S_OK;
   }
 };
-HRESULT registry(bool install) {
+std::wstring classKey() {
   wchar_t guid[64];
   StringFromGUID2(serviceId, guid, 64);
-  std::wstring key = std::wstring(L"Software\\Classes\\CLSID\\") + guid;
+  return std::wstring(L"Software\\Classes\\CLSID\\") + guid;
+}
+HRESULT existingRegistration() {
+  auto key = classKey() + L"\\InprocServer32";
+  wchar_t path[32768];
+  DWORD bytes = sizeof(path);
+  LSTATUS status = RegGetValueW(HKEY_LOCAL_MACHINE, key.c_str(), nullptr,
+                                RRF_RT_REG_SZ, nullptr, path, &bytes);
+  if (status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND)
+    return S_FALSE;
+  if (status != ERROR_SUCCESS)
+    return HRESULT_FROM_WIN32(status);
+  return std::wstring(path) == modulePath()
+             ? S_OK
+             : HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
+}
+HRESULT registry(bool install) {
+  std::wstring key = classKey();
   if (!install) {
     auto status = RegDeleteTreeW(HKEY_LOCAL_MACHINE, key.c_str());
     return status == ERROR_FILE_NOT_FOUND || status == ERROR_SUCCESS
                ? S_OK
                : HRESULT_FROM_WIN32(status);
   }
+  auto path = modulePath();
+  if (path.empty())
+    return E_FAIL;
   key += L"\\InprocServer32";
   HKEY handle;
   auto status = RegCreateKeyExW(HKEY_LOCAL_MACHINE, key.c_str(), 0, nullptr, 0,
                                 KEY_WRITE, nullptr, &handle, nullptr);
   if (status != ERROR_SUCCESS)
     return HRESULT_FROM_WIN32(status);
-  auto path = modulePath();
   status = RegSetValueExW(
       handle, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE *>(path.c_str()),
       static_cast<DWORD>((path.size() + 1) * sizeof(wchar_t)));
@@ -898,6 +928,8 @@ HRESULT registry(bool install) {
                             reinterpret_cast<const BYTE *>(L"Apartment"),
                             sizeof(L"Apartment"));
   RegCloseKey(handle);
+  if (status != ERROR_SUCCESS)
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE, classKey().c_str());
   return HRESULT_FROM_WIN32(status);
 }
 } // namespace
@@ -926,28 +958,64 @@ extern "C" HRESULT __stdcall DllRegisterServer() {
   HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
     return initialized;
-  HRESULT result = registry(true);
   ITfInputProcessorProfiles *profiles = nullptr;
-  if (SUCCEEDED(result))
-    result = CoCreateInstance(
-        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfInputProcessorProfiles, reinterpret_cast<void **>(&profiles));
-  if (SUCCEEDED(result))
-    result = profiles->Register(serviceId);
-  if (SUCCEEDED(result)) {
-    auto path = modulePath();
-    result = profiles->AddLanguageProfile(
-        serviceId, MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT), profileId,
-        L"tgskk", 5, path.c_str(), static_cast<ULONG>(path.size()), 0);
-  }
   ITfCategoryMgr *categories = nullptr;
-  if (SUCCEEDED(result))
-    result = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
-                              CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
-                              reinterpret_cast<void **>(&categories));
-  if (SUCCEEDED(result))
-    result = categories->RegisterCategory(serviceId, GUID_TFCAT_TIP_KEYBOARD,
-                                          serviceId);
+  bool createdRegistry = false, registeredProfile = false;
+  HRESULT result = E_FAIL;
+  try {
+    result = existingRegistration();
+    if (SUCCEEDED(result)) {
+      const bool fresh = result == S_FALSE;
+      result = fresh ? registry(true) : S_OK;
+      createdRegistry = fresh && SUCCEEDED(result);
+      if (SUCCEEDED(result))
+        result = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                                  CLSCTX_INPROC_SERVER,
+                                  IID_ITfInputProcessorProfiles,
+                                  reinterpret_cast<void **>(&profiles));
+      if (SUCCEEDED(result)) {
+        result = profiles->Register(serviceId);
+        registeredProfile = SUCCEEDED(result);
+      }
+      if (SUCCEEDED(result)) {
+        auto path = modulePath();
+        result = profiles->AddLanguageProfile(
+            serviceId, MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT), profileId,
+            L"tgskk", 5, path.c_str(), static_cast<ULONG>(path.size()), 0);
+      }
+      if (SUCCEEDED(result))
+        result = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
+                                  CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
+                                  reinterpret_cast<void **>(&categories));
+      if (SUCCEEDED(result))
+        result = categories->RegisterCategory(
+            serviceId, GUID_TFCAT_TIP_KEYBOARD, serviceId);
+    }
+  } catch (...) {
+    result = E_OUTOFMEMORY;
+  }
+  if (FAILED(result) && createdRegistry) {
+    HRESULT cleanup = S_OK;
+    if (categories)
+      cleanup = categories->UnregisterCategory(
+          serviceId, GUID_TFCAT_TIP_KEYBOARD, serviceId);
+    if (registeredProfile) {
+      const HRESULT removed = profiles->Unregister(serviceId);
+      if (FAILED(removed))
+        cleanup = removed;
+    }
+    // Retain the class path when cleanup fails so regsvr32 /u can retry.
+    if (SUCCEEDED(cleanup)) {
+      try {
+        cleanup = registry(false);
+      } catch (...) {
+        cleanup = E_OUTOFMEMORY;
+      }
+    }
+    if (FAILED(cleanup))
+      OutputDebugStringW(
+          L"tgskk: partial registration cleanup failed; run regsvr32 /u.\n");
+  }
   release(categories);
   release(profiles);
   if (SUCCEEDED(initialized))
@@ -959,22 +1027,34 @@ extern "C" HRESULT __stdcall DllUnregisterServer() {
   if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
     return initialized;
   ITfInputProcessorProfiles *profiles = nullptr;
-  if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-                                 CLSCTX_INPROC_SERVER,
-                                 IID_ITfInputProcessorProfiles,
-                                 reinterpret_cast<void **>(&profiles)))) {
-    profiles->Unregister(serviceId);
-    release(profiles);
-  }
   ITfCategoryMgr *categories = nullptr;
-  if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
-                                 CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
-                                 reinterpret_cast<void **>(&categories)))) {
-    categories->UnregisterCategory(serviceId, GUID_TFCAT_TIP_KEYBOARD,
-                                   serviceId);
-    release(categories);
+  HRESULT result = E_FAIL;
+  try {
+    result = existingRegistration();
+    if (result == S_FALSE) {
+      result = S_OK;
+    } else if (SUCCEEDED(result)) {
+      result = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
+                                CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
+                                reinterpret_cast<void **>(&categories));
+      if (SUCCEEDED(result))
+        result = categories->UnregisterCategory(
+            serviceId, GUID_TFCAT_TIP_KEYBOARD, serviceId);
+      HRESULT profileResult = CoCreateInstance(
+          CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+          IID_ITfInputProcessorProfiles, reinterpret_cast<void **>(&profiles));
+      if (SUCCEEDED(profileResult))
+        profileResult = profiles->Unregister(serviceId);
+      if (SUCCEEDED(result))
+        result = profileResult;
+      if (SUCCEEDED(result))
+        result = registry(false);
+    }
+  } catch (...) {
+    result = E_OUTOFMEMORY;
   }
-  HRESULT result = registry(false);
+  release(categories);
+  release(profiles);
   if (SUCCEEDED(initialized))
     CoUninitialize();
   return result;

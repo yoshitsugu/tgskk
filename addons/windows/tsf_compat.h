@@ -14,6 +14,12 @@ struct ITfTextInputProcessorEx : ITfTextInputProcessor {
                                                DWORD) = 0;
 };
 #endif
+#ifndef TF_TMAE_SECUREMODE
+#define TF_TMAE_SECUREMODE 0x00000002
+#endif
+#ifndef TF_TMAE_UIELEMENTENABLEDONLY
+#define TF_TMAE_UIELEMENTENABLEDONLY 0x00000004
+#endif
 #ifndef TF_CLIENTID_NULL
 #define TF_CLIENTID_NULL ((TfClientId)0)
 #endif

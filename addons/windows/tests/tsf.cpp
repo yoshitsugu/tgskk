@@ -317,6 +317,10 @@ int main(int argc, char **argv) {
   store->window =
       CreateWindowW(L"STATIC", L"tgskk test", WS_OVERLAPPEDWINDOW, 0, 0, 800,
                     600, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+  require(store->window != nullptr, "test window");
+  ShowWindow(store->window, SW_SHOW);
+  SetForegroundWindow(store->window);
+  SetFocus(store->window);
   ITfContext *context = nullptr;
   TfEditCookie cookie;
   require(SUCCEEDED(document->CreateContext(
@@ -334,12 +338,27 @@ int main(int argc, char **argv) {
                                      IID_ITfInputProcessorProfiles,
                                      reinterpret_cast<void **>(&profiles))),
           "profiles");
-  LANGID language = MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT);
+  LANGID language = 0;
+  require(SUCCEEDED(profiles->GetCurrentLanguage(&language)),
+          "current input language");
+  const LANGID japanese = MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT);
+  BSTR description = nullptr;
+  require(SUCCEEDED(profiles->GetLanguageProfileDescription(
+              serviceId, japanese, profileId, &description)),
+          "Japanese profile registration");
+  require(description && std::wstring(description) == L"tgskk",
+          "Japanese profile description");
+  SysFreeString(description);
+  // Hosted Windows runners lack Japanese language support. Route the same TIP
+  // through a temporary profile in the runner's installed input language.
+  if (language != japanese)
+    require(SUCCEEDED(profiles->AddLanguageProfile(serviceId, language,
+                                                   profileId, L"tgskk test", 10,
+                                                   nullptr, 0, 0)),
+            "temporary test profile");
   require(SUCCEEDED(profiles->EnableLanguageProfile(serviceId, language,
                                                     profileId, TRUE)),
           "enable profile");
-  require(SUCCEEDED(profiles->ChangeCurrentLanguage(language)),
-          "Japanese language");
   require(SUCCEEDED(profiles->ActivateLanguageProfile(serviceId, language,
                                                       profileId)),
           "profile activation");
