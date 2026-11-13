@@ -65,8 +65,8 @@ the installed input language so a Japanese language pack is not required on the
 test runner. Run it in a disposable Windows environment. Its second argument is
 an EUC-JP test dictionary; the workflow shows how to prepare this fixture.
 
-On the Windows 2025 runner, rejecting a composition retains a TSF notification
-reference even in an independent API-only control. This also retains the document
+On the Windows 2025 runner with this fixture, rejecting a composition retains a
+TSF notification reference even in an independent API-only control. This also retains the document
 context. Rejection leaves the input state and document unchanged, but DLL unloading
 after this path is not guaranteed. The workflow checks normal input with strict
 unload assertions, and tests rejection in a separate process against the control;

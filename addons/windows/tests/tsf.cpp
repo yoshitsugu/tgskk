@@ -664,6 +664,8 @@ int run(int argc, char **argv) {
     require(!key('K', true), "rejected composition consumed key");
     require(store->text.empty(), "rejected composition changed document");
     store->refuseComposition = false;
+    require(key('A'), "input after rejected composition");
+    require(store->text == L"あ", "rejected composition advanced input state");
   } else {
     require(key('K', true), "uppercase kana rejected");
     require(key('A'), "kana continuation");
