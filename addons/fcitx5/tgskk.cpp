@@ -45,6 +45,20 @@ struct EncodingConstrain {
   }
 };
 
+struct SkkservModeConstrain {
+  using Type = std::string;
+  static constexpr std::array<const char *, 3> values{"Google", "Custom", "Disabled"};
+  bool check(const std::string &value) const {
+    return std::find(values.begin(), values.end(), value) != values.end();
+  }
+  void dumpDescription(RawConfig &config) const {
+    config.setValueByPath("IsEnum", "True");
+    for (size_t i = 0; i < values.size(); ++i) {
+      config.setValueByPath("Enum/" + std::to_string(i), values[i]);
+    }
+  }
+};
+
 FCITX_CONFIGURATION(
     TgskkConfig,
     Option<std::string> dictionary{this, "Dictionary", "SKK dictionary path",
@@ -56,10 +70,18 @@ FCITX_CONFIGURATION(
         IntConstrain(0)};
     Option<bool> modeIndicator{this, "ModeIndicator",
                                "Show mode near the cursor", true};
+    Option<std::string, SkkservModeConstrain> skkservMode{
+        this, "SkkservMode", "Online candidates when no local candidate exists", "Google"};
+    Option<std::string> skkservHost{this, "SkkservHost", "Custom SKK server host", "127.0.0.1"};
+    Option<int, IntConstrain> skkservPort{this, "SkkservPort", "Custom SKK server port", 1178, IntConstrain(1, 65535)};
+    Option<std::string, EncodingConstrain> skkservEncoding{
+        this, "SkkservEncoding", "Custom SKK server encoding", "euc-jp"};
+    Option<int, IntConstrain> skkservTimeoutMs{this, "SkkservTimeoutMs", "Wait for missing candidates (ms)", 300, IntConstrain(0, 1000)};
     Option<bool> zenzEnabled{this, "ZenzEnabled", "Use local Zenz ranking", true};
     Option<std::string> zenzModel{this, "ZenzModel", "Zenz v3 model path", TGSKK_ZENZ_MODEL};);
 
 using Zenz = std::unique_ptr<TgskkZenz, decltype(&tgskk_zenz_free)>;
+using Skkserv = std::unique_ptr<TgskkSkkserv, decltype(&tgskk_skkserv_free)>;
 using Runtime = std::unique_ptr<TgskkRuntime, decltype(&tgskk_runtime_free)>;
 using Session = std::unique_ptr<TgskkSession, decltype(&tgskk_session_free)>;
 
@@ -127,6 +149,9 @@ public:
     if (auto *message = tgskk_zenz_take_error(zenz_.get())) {
       FCITX_ERROR() << "tgskk: " << takeError(message);
     }
+    if (auto *message = tgskk_skkserv_take_error(skkserv_.get())) {
+      FCITX_ERROR() << "tgskk: " << takeError(message);
+    }
     updateContext(ic);
     auto *session = state->session.get();
     auto *view = tgskk_session_view(session);
@@ -191,6 +216,7 @@ public:
     if (view && !view->consumed) {
       state->forgetContext();
       tgskk_session_context(session, nullptr, 0);
+      tgskk_session_network_allowed(session, 0);
     }
   }
 
@@ -209,6 +235,9 @@ public:
       } else if (!tgskk_session_set_zenz(state->session.get(), zenz_.get())) {
         state->session.reset();
         error_ = "Could not attach Zenz worker";
+      } else if (!tgskk_session_set_skkserv(state->session.get(), skkserv_.get())) {
+        state->session.reset();
+        error_ = "Could not attach SKK server worker";
       }
     }
     if (!state->session) {
@@ -310,7 +339,9 @@ private:
     const auto caps = ic->capabilityFlags();
     state->sensitive = caps.testAny(CapabilityFlag::PasswordOrSensitive) || caps.test(CapabilityFlag::Disable);
     const bool selection = surrounding.isValid() && surrounding.cursor() != surrounding.anchor();
-    if (state->sensitive || selection || !*config_.zenzEnabled) {
+    const bool allowed = !state->sensitive && !selection && ic->hasFocus();
+    tgskk_session_network_allowed(state->session.get(), allowed);
+    if (!allowed || !*config_.zenzEnabled) {
       state->forgetContext();
       tgskk_session_context(state->session.get(), nullptr, 0);
       return;
@@ -333,6 +364,25 @@ private:
   }
 
   void configure(const TgskkConfig &next, bool persist) {
+    const bool replaceServer = !configured_ || *next.skkservMode != *config_.skkservMode ||
+        *next.skkservHost != *config_.skkservHost || *next.skkservPort != *config_.skkservPort ||
+        *next.skkservEncoding != *config_.skkservEncoding || *next.skkservTimeoutMs != *config_.skkservTimeoutMs;
+    Skkserv server(nullptr, tgskk_skkserv_free);
+    if (replaceServer && *next.skkservMode != "Disabled") {
+      char *error = nullptr;
+      if (*next.skkservMode == "Google") {
+        server.reset(tgskk_skkserv_google_new(TGSKK_GOOGLE_SKKSERV, *next.skkservTimeoutMs, &error));
+      } else if (*next.skkservMode == "Custom") {
+        server.reset(tgskk_skkserv_custom_new(next.skkservHost->c_str(),
+            static_cast<uint16_t>(*next.skkservPort), next.skkservEncoding->c_str(),
+            *next.skkservTimeoutMs, &error));
+      }
+      if (!server) {
+        error_ = error ? takeError(error) : "Invalid SKK server mode";
+        FCITX_ERROR() << "tgskk: " << error_;
+        return;
+      }
+    }
     const bool replaceDictionary = !runtime_ ||
                                    *next.dictionary != *config_.dictionary ||
                                    *next.encoding != *config_.encoding;
@@ -372,6 +422,16 @@ private:
     const bool changeCandidateDisplay = *next.inlineCandidates != *config_.inlineCandidates;
     config_ = next;
     configured_ = true;
+    if (replaceServer) {
+      skkserv_ = std::move(server);
+      instance_->inputContextManager().foreach([this](InputContext *ic) {
+        auto *state = ic->propertyFor(&factory_);
+        if (state->session && !tgskk_session_set_skkserv(state->session.get(), skkserv_.get())) {
+          failed(ic);
+        }
+        return true;
+      });
+    }
     if (replaceZenz) {
       zenz_.reset();
       if (*config_.zenzEnabled) {
@@ -511,6 +571,7 @@ private:
   TgskkConfig config_;
   Runtime runtime_{nullptr, tgskk_runtime_free};
   Zenz zenz_{nullptr, tgskk_zenz_free};
+  Skkserv skkserv_{nullptr, tgskk_skkserv_free};
   bool configured_ = false;
   std::string error_;
   uint64_t generation_ = 0;

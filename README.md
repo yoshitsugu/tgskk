@@ -12,7 +12,8 @@ geditでの実動作を録画しています。クリックでMP4を開きます
 入力エンジンは[CSKK](https://github.com/naokiri/cskk)、デスクトップとの接続はfcitx5を使います。
 現状はLinuxのみ対応しています。
 標準ルールは同梱しており、libcskkの別途インストールは不要です。
-オンライン候補取得には対応していません。
+ローカル辞書に候補がない読みは、同梱の[Google IME SKK server](https://github.com/yoshitsugu/google-ime-skkserv-rs)で補います。
+既定で有効です。外部へ読みを送信したくない場合は`SkkservMode=Disabled`で無効にできます。
 
 ## インストール
 
@@ -52,7 +53,7 @@ Shiftを押しながら読みの入力を始め、Spaceで変換します。
 `InlineCandidates`で一覧を出す前の候補数を変更できます。既定は4、3ならfcitx5-cskkと同じタイミング、0なら最初から一覧を表示します。
 AIが実際に順位を変えた場合は、一覧の補助行に *AI-ranked* と表示します。表示後の候補順は変わりません。
 
-辞書・文脈補助の設定、復旧手順、CLIの使い方は[利用ガイド](docs/usage.md)を参照してください。
+辞書・文脈補助・SKK serverの設定、復旧手順、CLIの使い方は[利用ガイド](docs/usage.md)を参照してください。
 
 ## 開発
 
@@ -69,3 +70,4 @@ bash scripts/check-fcitx5.sh
 ## ライセンス
 
 [GPL-3.0-or-later](LICENSE)。CSKKの著作権情報は[LICENSE.txt](third_party/cskk/LICENSE.txt)と[README](third_party/cskk/README.md)、モデルと推論runtimeの出典・ライセンスは[NOTICE](native/zenz/NOTICE.md)に記載しています。
+同梱するGoogle IME SKK serverの出典とライセンスは[取り込み情報](third_party/gskkserv/UPSTREAM.md)を参照してください。

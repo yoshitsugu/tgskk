@@ -20,6 +20,12 @@ target_include_directories(fcitx5-tgskk PRIVATE "${TGSKK_ROOT}/crates/tgskk-ffi/
 target_link_libraries(fcitx5-tgskk PRIVATE Fcitx5::Core tgskk-rust xkbcommon ${CMAKE_DL_LIBS} pthread)
 set(TGSKK_ZENZ_WORKER "${CMAKE_INSTALL_FULL_LIBEXECDIR}/tgskk-zenz-worker" CACHE FILEPATH "Zenz worker executable")
 set(TGSKK_ZENZ_MODEL "${CMAKE_INSTALL_FULL_DATADIR}/tgskk/zenz-v3.2-small-Q5_K_M.gguf" CACHE FILEPATH "Default Zenz model")
+set(TGSKK_GOOGLE_SKKSERV "${CMAKE_INSTALL_FULL_LIBEXECDIR}/tgskk-google-skkserv" CACHE FILEPATH "Bundled Google SKK server executable")
+set(TGSKK_GOOGLE_SKKSERV_BINARY "${TGSKK_ROOT}/target/release/gskkserv" CACHE FILEPATH "Prebuilt Google SKK server binary")
+if(NOT EXISTS "${TGSKK_GOOGLE_SKKSERV_BINARY}")
+    message(FATAL_ERROR "Build the Google helper first: cargo build --release --manifest-path third_party/gskkserv/Cargo.toml --target-dir target")
+endif()
+target_compile_definitions(fcitx5-tgskk PRIVATE TGSKK_GOOGLE_SKKSERV="${TGSKK_GOOGLE_SKKSERV}")
 target_compile_definitions(fcitx5-tgskk PRIVATE TGSKK_ZENZ_WORKER="${TGSKK_ZENZ_WORKER}" TGSKK_ZENZ_MODEL="${TGSKK_ZENZ_MODEL}")
 target_compile_options(fcitx5-tgskk PRIVATE -Wall -Wextra -Wpedantic)
 target_link_options(fcitx5-tgskk PRIVATE -Wl,--exclude-libs,ALL -Wl,--no-undefined)
@@ -30,6 +36,9 @@ endif()
 set_target_properties(fcitx5-tgskk PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 
 install(TARGETS fcitx5-tgskk LIBRARY DESTINATION "${FCITX_INSTALL_ADDONDIR}")
+install(PROGRAMS "${TGSKK_GOOGLE_SKKSERV_BINARY}" DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}" RENAME tgskk-google-skkserv)
+install(FILES "${TGSKK_ROOT}/third_party/gskkserv/LICENSE-APACHE" "${TGSKK_ROOT}/third_party/gskkserv/UPSTREAM.md"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/tgskk/google-ime-skkserv")
 install(FILES tgskk.conf DESTINATION "${FCITX_INSTALL_PKGDATADIR}/addon")
 install(FILES tgskk-inputmethod.conf DESTINATION "${FCITX_INSTALL_PKGDATADIR}/inputmethod" RENAME tgskk.conf)
 

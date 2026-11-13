@@ -73,6 +73,7 @@ pub struct CskkContext {
     config: CskkConfig,
     composition_triggers: HashSet<Keysym>,
     conversion_provider: Option<Box<dyn conversion::ConversionProvider>>,
+    missing_conversion_provider: Option<Box<dyn conversion::MissingConversionProvider>>,
     conversion_error: Option<conversion::ConversionError>,
     //rule: CskkRuleMetadataEntry,
 }
@@ -336,12 +337,33 @@ pub fn get_available_rules() -> Result<BTreeMap<String, CskkRuleMetadataEntry>, 
     Ok(rulematadata.get_rule_list())
 }
 
+fn conservative_learning(
+    first: conversion::LearningPolicy,
+    second: conversion::LearningPolicy,
+) -> conversion::LearningPolicy {
+    use conversion::LearningPolicy;
+    if first == LearningPolicy::ExplicitSelectionOnly
+        || second == LearningPolicy::ExplicitSelectionOnly
+    {
+        LearningPolicy::ExplicitSelectionOnly
+    } else {
+        LearningPolicy::Always
+    }
+}
+
 impl CskkContext {
     pub fn set_conversion_provider(
         &mut self,
         provider: Option<Box<dyn conversion::ConversionProvider>>,
     ) {
         self.conversion_provider = provider;
+    }
+
+    pub fn set_missing_conversion_provider(
+        &mut self,
+        provider: Option<Box<dyn conversion::MissingConversionProvider>>,
+    ) {
+        self.missing_conversion_provider = provider;
     }
 
     pub fn take_conversion_error(&mut self) -> Option<conversion::ConversionError> {
@@ -404,6 +426,7 @@ impl CskkContext {
             config: CskkConfig::default(),
             composition_triggers: rule.get_henkan_trigger_keysyms(),
             conversion_provider: None,
+            missing_conversion_provider: None,
             conversion_error: None,
         })
     }
@@ -545,13 +568,35 @@ impl CskkContext {
             return;
         }
         let mut candidates = get_all_candidates(&self.dictionaries, &composite_key);
-        let mut learning = conversion::LearningPolicy::Always;
+        let mut missing_policy = None;
+        if candidates.is_empty() {
+            if let Some(provider) = self.missing_conversion_provider.as_mut() {
+                let request = conversion::ConversionRequest::new_missing(&composite_key);
+                let response = provider.prepare(&request);
+                match conversion::apply_response(&mut candidates, &composite_key, response) {
+                    Ok(policy) => missing_policy = Some(policy),
+                    Err(error) => self.conversion_error = Some(error),
+                }
+            }
+        }
+        let mut learning = missing_policy.unwrap_or(conversion::LearningPolicy::Always);
         if let Some(provider) = self.conversion_provider.as_mut() {
-            let request =
+            let mut request =
                 conversion::ConversionRequest::new(&composite_key, &candidates, &self.dictionaries);
+            if missing_policy.is_some() {
+                // Candidates from the missing stage are not user-dictionary
+                // entries yet, so they must not be protected from reordering.
+                request.protected_indices.clear();
+            }
             let response = provider.prepare(&request);
             match conversion::apply_response(&mut candidates, &composite_key, response) {
-                Ok(policy) => learning = policy,
+                Ok(policy) => {
+                    learning = if missing_policy.is_some() {
+                        conservative_learning(learning, policy)
+                    } else {
+                        policy
+                    };
+                }
                 Err(error) => self.conversion_error = Some(error),
             }
         }
@@ -1626,6 +1671,7 @@ impl CskkContext {
             config: CskkConfig::default(),
             composition_triggers,
             conversion_provider: None,
+            missing_conversion_provider: None,
             conversion_error: None,
         })
     }
@@ -1670,6 +1716,7 @@ impl CskkContext {
             config: CskkConfig::default(),
             composition_triggers: HashSet::new(),
             conversion_provider: None,
+            missing_conversion_provider: None,
             conversion_error: None,
         }
     }
@@ -1701,6 +1748,7 @@ impl CskkContext {
             config: CskkConfig::default(),
             composition_triggers,
             conversion_provider: None,
+            missing_conversion_provider: None,
             conversion_error: None,
         }
     }
@@ -1785,6 +1833,7 @@ mod unit_tests {
             config: CskkConfig::default(),
             composition_triggers,
             conversion_provider: None,
+            missing_conversion_provider: None,
             conversion_error: None,
             //rule_metadata,
         }

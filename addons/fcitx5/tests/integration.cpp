@@ -24,6 +24,12 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <atomic>
+#include <array>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <unistd.h>
 
 using namespace fcitx;
 
@@ -76,6 +82,122 @@ void sequence(TestContext &context, const std::string &keys) {
   for (std::string key; stream >> key;) {
     send(context, key);
   }
+}
+
+class SkkTestServer {
+public:
+  SkkTestServer() : socket_(socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0)) {
+    FCITX_ASSERT(socket_ >= 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    FCITX_ASSERT(bind(socket_, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+    socklen_t size = sizeof(address);
+    FCITX_ASSERT(getsockname(socket_, reinterpret_cast<sockaddr *>(&address), &size) == 0);
+    port = ntohs(address.sin_port);
+    FCITX_ASSERT(listen(socket_, 4) == 0);
+    thread_ = std::thread([this] {
+      while (!stop_) {
+        pollfd ready{socket_, POLLIN, 0};
+        if (poll(&ready, 1, 10) <= 0) { continue; }
+        int client = accept4(socket_, nullptr, nullptr, SOCK_CLOEXEC);
+        if (client < 0) { continue; }
+        ++requests;
+        timeval timeout{1, 0};
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        char byte = 0;
+        size_t count = 0;
+        while (count++ < 1026 && recv(client, &byte, 1, 0) == 1 && byte != ' ') {}
+        const std::string response = "1/東京/\n";
+        ::send(client, response.data(), response.size(), MSG_NOSIGNAL);
+        close(client);
+      }
+    });
+  }
+  ~SkkTestServer() {
+    stop_ = true;
+    thread_.join();
+    close(socket_);
+  }
+  int port = 0;
+  std::atomic<int> requests{0};
+private:
+  int socket_;
+  std::atomic<bool> stop_{false};
+  std::thread thread_;
+};
+
+void verifySkkserv(Instance &instance, InputMethodEngine &engine, FocusGroup &focus) {
+  SkkTestServer server;
+  RawConfig saved;
+  engine.getConfig()->save(saved);
+  RawConfig config = saved;
+  config.setValueByPath("ZenzEnabled", "False");
+  config.setValueByPath("SkkservMode", "Custom");
+  config.setValueByPath("SkkservHost", "127.0.0.1");
+  config.setValueByPath("SkkservPort", std::to_string(server.port));
+  config.setValueByPath("SkkservEncoding", "utf-8");
+  config.setValueByPath("SkkservTimeoutMs", "300");
+  engine.setConfig(config);
+  TestContext context(instance.inputContextManager());
+  context.setFocusGroup(&focus);
+  context.focusIn();
+  instance.setCurrentInputMethod(&context, "tgskk", false);
+  sequence(context, "K a n j i space Return");
+  FCITX_ASSERT(context.commits.back() == "漢字");
+  FCITX_ASSERT(server.requests == 0);
+
+  sequence(context, "T o u k y o u space");
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼東京");
+  FCITX_ASSERT(server.requests == 1);
+  auto commits = context.commits.size();
+  RawConfig changed = config;
+  changed.setValueByPath("SkkservTimeoutMs", "400");
+  engine.setConfig(changed);
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼東京");
+  FCITX_ASSERT(context.commits.size() == commits);
+  context.reset();
+  engine.setConfig(config);
+  sequence(context, "T o u k y o u space");
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼東京");
+  FCITX_ASSERT(server.requests == 2);
+  context.reset();
+
+  for (auto flag : {CapabilityFlag::Sensitive, CapabilityFlag::Password, CapabilityFlag::Disable}) {
+    context.setCapabilityFlags(CapabilityFlags{CapabilityFlag::Preedit, flag});
+    sequence(context, "T o u k y o u space");
+    FCITX_ASSERT(context.inputPanel().clientPreedit().toString() != "▼東京");
+    FCITX_ASSERT(server.requests == 2);
+    context.reset();
+  }
+  context.setCapabilityFlags(CapabilityFlag::Preedit);
+  context.surroundingText().setText("秘密", 0, 2);
+  sequence(context, "T o u k y o u space");
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString() != "▼東京");
+  FCITX_ASSERT(server.requests == 2);
+  context.reset();
+  context.surroundingText().setText("", 0, 0);
+  sequence(context, "T o u k y o u");
+  const auto preedit = context.inputPanel().clientPreedit().toString();
+  RawConfig invalid = config;
+  invalid.setValueByPath("SkkservHost", "bad host");
+  engine.setConfig(invalid);
+  RawConfig after;
+  engine.getConfig()->save(after);
+  FCITX_ASSERT(*after.valueByPath("SkkservHost") == *config.valueByPath("SkkservHost"));
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == preedit);
+
+  RawConfig disabled = config;
+  disabled.setValueByPath("SkkservMode", "Disabled");
+  engine.setConfig(disabled);
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == preedit);
+  send(context, "space");
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString() != "▼東京");
+  FCITX_ASSERT(server.requests == 2);
+  FCITX_ASSERT(context.commits.size() == commits);
+  context.reset();
+  context.focusOut();
+  engine.setConfig(saved);
 }
 
 void verifyCandidateOwnershipAndFocus(Instance &instance, FocusGroup &focus) {
@@ -297,6 +419,7 @@ void verify(Instance &instance) {
   FCITX_ASSERT(engine);
 
   FocusGroup focus("tgskk-test", instance.inputContextManager());
+  verifySkkserv(instance, *engine, focus);
   verifyDelayedCandidates(instance, *engine, focus);
   RawConfig immediate;
   engine->getConfig()->save(immediate);
@@ -652,6 +775,22 @@ void verifyZenz(Instance &instance) {
   FCITX_ASSERT(engine);
   RawConfig original;
   engine->getConfig()->save(original);
+  SkkTestServer server;
+  RawConfig remote = original;
+  remote.setValueByPath("SkkservMode", "Custom");
+  remote.setValueByPath("SkkservHost", "127.0.0.1");
+  remote.setValueByPath("SkkservPort", std::to_string(server.port));
+  remote.setValueByPath("SkkservEncoding", "utf-8");
+  engine->setConfig(remote);
+  FCITX_ASSERT(convert("駅で", true) == "▼汽車");
+  FCITX_ASSERT(server.requests == 0);
+  context.reset();
+  sequence(context, "T o u k y o u space");
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼東京");
+  FCITX_ASSERT(server.requests == 1);
+  FCITX_ASSERT(context.inputPanel().auxUp().toString() != "AI-ranked");
+  context.reset();
+  engine->setConfig(original);
   RawConfig quiet = original;
   quiet.setValueByPath("InlineCandidates", "4");
   engine->setConfig(quiet);
@@ -695,7 +834,7 @@ int main() {
   dictionary.close();
   std::ofstream config(root / "config/conf/tgskk.conf");
   config << "Dictionary=" << (root / "SKK-JISYO.utf8").string()
-         << "\nEncoding=utf-8\nModeIndicator=True\n";
+         << "\nEncoding=utf-8\nModeIndicator=True\nSkkservMode=Disabled\n";
   config.close();
   {
     char name[] = "test-tgskk", disable[] = "--disable=all",

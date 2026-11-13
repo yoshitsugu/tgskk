@@ -9,6 +9,7 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 tgskk-core = { path = "../tgskk-core" }
+tgskk-skkserv = { path = "../tgskk-skkserv" }
 
 tgskk-zenz = { path = "../tgskk-zenz" }
 

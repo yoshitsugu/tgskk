@@ -1,6 +1,12 @@
 [workspace]
-members = ["crates/tgskk-core", "crates/tgskk-cli", "crates/tgskk-ffi", "crates/tgskk-zenz"]
-exclude = ["third_party/cskk"]
+members = [
+    "crates/tgskk-core",
+    "crates/tgskk-cli",
+    "crates/tgskk-ffi",
+    "crates/tgskk-skkserv",
+    "crates/tgskk-zenz",
+]
+exclude = ["third_party/cskk", "third_party/gskkserv"]
 resolver = "3"
 
 [workspace.package]

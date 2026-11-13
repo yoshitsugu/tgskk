@@ -11,6 +11,11 @@ fcitx5の設定画面から「tgskk」の設定を開きます。
 | `Encoding` | `euc-jp` | `euc-jp`または`utf-8`（小文字で指定） |
 | `InlineCandidates` | `4` | 一覧を出す前に順に表示する候補数。`0`なら最初から一覧 |
 | `ModeIndicator` | `True` | モード変更時に「あ」「ア」「A」などを一時表示 |
+| `SkkservMode` | `Google` | 候補がないときの取得先。`Google`、`Custom`、`Disabled` |
+| `SkkservHost` | `127.0.0.1` | `Custom`で使うserverのホスト |
+| `SkkservPort` | `1178` | `Custom`で使うserverのポート |
+| `SkkservEncoding` | `euc-jp` | `Custom`の通信文字コード。`euc-jp`または`utf-8` |
+| `SkkservTimeoutMs` | `300` | 候補取得を待つ時間（0〜1000ms） |
 | `ZenzEnabled` | `True` | ローカルAIによる候補の並べ替え |
 | `ZenzModel` | `/usr/share/tgskk/zenz-v3.2-small-Q5_K_M.gguf` | v3形式に対応するモデルのパス |
 
@@ -18,6 +23,42 @@ fcitx5の設定画面から「tgskk」の設定を開きます。
 モード表示や`InlineCandidates`の変更では、入力途中の文字を保持します。
 モード表示の位置・期間と補助行の書体・文字サイズは、fcitx5のUIに従います。
 GNOME Waylandの実アプリでの表示は未検証です。
+
+### SKK server
+
+ローカル辞書に候補がないときだけ、オンラインで候補を取得します。
+既定の`Google`は同梱のGoogle IME SKK serverを使い、変換対象の読みをGoogleへ送信します。
+送り仮名がある場合は送り仮名を含む読みを送ります。
+左文脈や確定済みの文章は送信しません。
+`Google`で取得するのは、ひらがなと長音符などからなる読みの候補です。
+外部取得を使わない場合は`SkkservMode=Disabled`にします。
+
+辞書に候補がある通常の変換と、読みを入力している間には通信しません。
+候補取得が既定の300msに間に合わなければ、通常の辞書登録へ進みます。
+表示済みの候補は後から差し替えません。
+遅れて届いた結果は次回の変換で利用でき、`SkkservTimeoutMs=0`では待たずに取得を依頼します。
+取得結果はメモリに最大128件、候補がある場合は5分、候補がない場合は5秒保持します。
+通信失敗は候補なしとしてcacheせず、次回に再試行します。
+取得先などの設定変更と再起動でcacheを破棄します。
+
+独自のSKK serverを使う場合は、serverを別途起動し、次のように設定します。
+通信文字コードは辞書の`Encoding`とは独立しています。
+
+```ini
+SkkservMode=Custom
+SkkservHost=127.0.0.1
+SkkservPort=1178
+SkkservEncoding=utf-8
+SkkservTimeoutMs=300
+```
+
+Google用helperは最初の取得時に起動し、その後は再利用します。
+ポートの確保や別途のdaemon起動は不要で、helperとの通信にはUTF-8を使います。
+文脈補助を無効にしてもSKK serverは使えます。
+password、sensitive、disable属性、選択範囲がある入力欄と、フォーカスのない入力欄では、cacheを含めて外部候補を使いません。
+外部候補も確定するとユーザー辞書へ学習します。
+数値変換用の`#`テンプレートなど、外部候補として扱えない表記は除外します。
+取得に失敗してもローカル辞書での入力は継続でき、診断はfcitx5のログへ出ます。
 
 ### 候補一覧
 

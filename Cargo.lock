@@ -852,7 +852,15 @@ version = "0.1.0"
 dependencies = [
  "tempfile",
  "tgskk-core",
+ "tgskk-skkserv",
  "tgskk-zenz",
+]
+
+[[package]]
+name = "tgskk-skkserv"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
 ]
 
 [[package]]

@@ -708,3 +708,206 @@ fn bounded_preview_preserves_identity_and_does_not_truncate_actual_conversion() 
     assert_eq!(key(&mut input, "space").preedit, "▼独自");
     assert_eq!(input.candidates().len(), 33);
 }
+
+fn reject_missing_provider(_: &ConversionRequest) -> ConversionResponse {
+    panic!("missing provider must not run")
+}
+
+#[test]
+fn local_hit_never_calls_missing_provider() {
+    let mut input = session();
+    input.set_missing_conversion_provider(Some(Box::new(reject_missing_provider)));
+    assert_eq!(type_keys(&mut input, "K a n j i space").preedit, "▼漢字");
+    assert_eq!(key(&mut input, "Return").committed, "漢字");
+}
+
+#[test]
+fn local_hit_with_global_provider_keeps_provider_behavior() {
+    let mut input = session();
+    input.set_missing_conversion_provider(Some(Box::new(reject_missing_provider)));
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    input.set_conversion_provider(Some(Box::new(move |_: &ConversionRequest| {
+        observed.set(observed.get() + 1);
+        ConversionResponse {
+            order: Some(vec![1, 0, 2]),
+            learning: Some(LearningPolicy::ExplicitSelectionOnly),
+            ..Default::default()
+        }
+    })));
+    assert_eq!(type_keys(&mut input, "K a n j i space").preedit, "▼感じ");
+    assert_eq!(calls.get(), 1);
+    assert_eq!(key(&mut input, "Return").committed, "感じ");
+}
+
+#[test]
+fn empty_reading_never_invokes_missing_provider() {
+    for (start, expected_mode) in [
+        ("Q", CompositionMode::PreComposition),
+        ("slash", CompositionMode::Abbreviation),
+    ] {
+        let mut input = session();
+        input.set_missing_conversion_provider(Some(Box::new(reject_missing_provider)));
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        input.set_conversion_provider(Some(Box::new(move |_: &ConversionRequest| {
+            observed.set(observed.get() + 1);
+            ConversionResponse::default()
+        })));
+        key(&mut input, start);
+        for _ in 0..2 {
+            let outcome = key(&mut input, "space");
+            assert!(outcome.committed.is_empty());
+            assert_eq!(input.composition_mode(), expected_mode);
+            assert!(input.candidates().is_empty());
+        }
+        assert_eq!(calls.get(), 0);
+    }
+}
+
+#[test]
+fn preview_and_completion_never_call_missing_provider() {
+    let mut input = session();
+    input.set_missing_conversion_provider(Some(Box::new(reject_missing_provider)));
+    type_keys(&mut input, "K a n j i");
+    let preview = input.preview_conversion().unwrap();
+    assert_eq!(preview.reading, "かんじ");
+    let _ = input.reset();
+    let outcome = type_keys(&mut input, "T o u k y o u Tab");
+    assert!(outcome.conversion_error.is_none());
+}
+
+#[test]
+fn missing_provider_candidates_feed_global_provider_without_protection() {
+    let mut input = session();
+    input.set_missing_conversion_provider(Some(Box::new(|request: &ConversionRequest| {
+        assert_eq!(request.reading, "とうきょう");
+        assert!(request.candidates.is_empty());
+        assert!(request.protected_indices.is_empty());
+        ConversionResponse {
+            additional_candidates: vec![
+                ConversionCandidate {
+                    text: "東京".into(),
+                    annotation: Some("missing".into()),
+                },
+                ConversionCandidate {
+                    text: "とうきょう".into(),
+                    annotation: None,
+                },
+            ],
+            order: Some(vec![1, 0]),
+            ..Default::default()
+        }
+    })));
+    input.set_conversion_provider(Some(Box::new(|request: &ConversionRequest| {
+        assert_eq!(
+            request
+                .candidates
+                .iter()
+                .map(|candidate| candidate.text.as_str())
+                .collect::<Vec<_>>(),
+            ["とうきょう", "東京"]
+        );
+        assert_eq!(request.candidates[1].annotation.as_deref(), Some("missing"));
+        assert!(request.protected_indices.is_empty());
+        ConversionResponse {
+            order: Some(vec![1, 0]),
+            ..Default::default()
+        }
+    })));
+    let outcome = type_keys(&mut input, "T o u k y o u space");
+    assert!(outcome.conversion_error.is_none());
+    assert_eq!(outcome.preedit, "▼東京");
+    assert_eq!(input.candidates().len(), 2);
+    assert_eq!(key(&mut input, "Return").committed, "東京");
+}
+
+#[test]
+fn invalid_missing_response_reports_error_and_keeps_local_fallback() {
+    for (missing, expected) in [
+        (
+            ConversionResponse {
+                additional_candidates: vec![ConversionCandidate {
+                    text: String::new(),
+                    annotation: None,
+                }],
+                ..Default::default()
+            },
+            ConversionError::InvalidCandidate,
+        ),
+        (
+            ConversionResponse {
+                order: Some(vec![0]),
+                ..Default::default()
+            },
+            ConversionError::InvalidOrder,
+        ),
+    ] {
+        let mut input = session();
+        input.set_missing_conversion_provider(Some(Box::new(move |_: &ConversionRequest| {
+            missing.clone()
+        })));
+        let empty_seen = Rc::new(Cell::new(usize::MAX));
+        let observed = empty_seen.clone();
+        input.set_conversion_provider(Some(Box::new(move |request: &ConversionRequest| {
+            observed.set(request.candidates.len());
+            ConversionResponse::default()
+        })));
+        let outcome = type_keys(&mut input, "T o u k y o u space");
+        assert_eq!(outcome.conversion_error, Some(expected));
+        assert_eq!(empty_seen.get(), 0);
+        assert!(input.candidates().is_empty());
+    }
+}
+
+#[test]
+fn learning_policies_combine_conservatively_across_stages() {
+    for (missing_learning, global_learning, learned) in [
+        (
+            Some(LearningPolicy::ExplicitSelectionOnly),
+            Some(LearningPolicy::Always),
+            false,
+        ),
+        (
+            Some(LearningPolicy::Always),
+            Some(LearningPolicy::ExplicitSelectionOnly),
+            false,
+        ),
+        (Some(LearningPolicy::ExplicitSelectionOnly), None, false),
+        (
+            Some(LearningPolicy::Always),
+            Some(LearningPolicy::Always),
+            true,
+        ),
+    ] {
+        let (_dir, user, mut input) = learning_session();
+        input.set_missing_conversion_provider(Some(Box::new(move |_: &ConversionRequest| {
+            ConversionResponse {
+                additional_candidates: vec![ConversionCandidate {
+                    text: "東京".into(),
+                    annotation: None,
+                }],
+                learning: missing_learning,
+                ..Default::default()
+            }
+        })));
+        input.set_conversion_provider(Some(Box::new(move |_: &ConversionRequest| {
+            ConversionResponse {
+                learning: global_learning,
+                ..Default::default()
+            }
+        })));
+        let outcome = type_keys(&mut input, "T o u k y o u space");
+        assert!(outcome.conversion_error.is_none());
+        assert_eq!(key(&mut input, "Return").committed, "東京");
+
+        let mut user_only = InputSession::with_dictionaries(vec![user]).unwrap();
+        type_keys(&mut user_only, "T o u k y o u space");
+        let candidates = user_only.candidates();
+        if learned {
+            assert_eq!(candidates[0].text, "東京");
+        } else {
+            assert!(candidates.is_empty());
+        }
+    }
+}

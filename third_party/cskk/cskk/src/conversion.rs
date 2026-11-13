@@ -8,6 +8,24 @@ pub struct ConversionCandidate {
     pub annotation: Option<String>,
 }
 
+impl ConversionCandidate {
+    /// Validates a candidate supplied by an external source before it is merged
+    /// into the dictionary candidate list.
+    pub fn validate_external(&self) -> Result<(), ConversionError> {
+        if self.text.is_empty()
+            || unsupported_literal(&self.text)
+            || self.text.contains('#')
+            || self
+                .annotation
+                .as_ref()
+                .is_some_and(|annotation| annotation.is_empty() || unsupported_literal(annotation))
+        {
+            return Err(ConversionError::InvalidCandidate);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ConversionRequest {
     pub reading: String,
@@ -48,6 +66,21 @@ impl<F: FnMut(&ConversionRequest) -> ConversionResponse> ConversionProvider for 
     }
 }
 
+/// Called only when a nonempty reading produced no local dictionary candidates
+/// and an actual conversion is starting. Unlike [`ConversionProvider`], an
+/// implementation may wait for a bounded background result (for example a
+/// short network lookup under the caller's deadline) because this is never
+/// reached by preview or completion while typing, and never by a local hit.
+pub trait MissingConversionProvider {
+    fn prepare(&mut self, request: &ConversionRequest) -> ConversionResponse;
+}
+
+impl<F: FnMut(&ConversionRequest) -> ConversionResponse> MissingConversionProvider for F {
+    fn prepare(&mut self, request: &ConversionRequest) -> ConversionResponse {
+        self(request)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ConversionError {
     #[error("candidate order must be a complete permutation of the merged candidates")]
@@ -57,6 +90,21 @@ pub enum ConversionError {
 }
 
 impl ConversionRequest {
+    /// Dictionary key for this request, including the SKK okuri prefix when an
+    /// okuri is present (reading `か` with okuri `く` becomes `かk`).
+    pub fn dictionary_key(&self) -> String {
+        CompositeKey::new(&self.reading, self.okuri.clone()).get_dict_key()
+    }
+
+    pub(crate) fn new_missing(key: &CompositeKey) -> Self {
+        Self {
+            reading: key.get_to_composite().to_owned(),
+            okuri: key.get_okuri().clone(),
+            candidates: Vec::new(),
+            protected_indices: Vec::new(),
+        }
+    }
+
     pub(crate) fn new(
         key: &CompositeKey,
         candidates: &[Candidate],
@@ -113,16 +161,7 @@ pub(crate) fn apply_response(
     response: ConversionResponse,
 ) -> Result<LearningPolicy, ConversionError> {
     for extra in &response.additional_candidates {
-        if extra.text.is_empty()
-            || unsupported_literal(&extra.text)
-            || extra.text.contains('#')
-            || extra
-                .annotation
-                .as_ref()
-                .is_some_and(|annotation| annotation.is_empty() || unsupported_literal(annotation))
-        {
-            return Err(ConversionError::InvalidCandidate);
-        }
+        extra.validate_external()?;
     }
     let mut merged = candidates.clone();
     for extra in response.additional_candidates {
@@ -210,5 +249,62 @@ mod tests {
         )
         .unwrap();
         assert_eq!(learning, LearningPolicy::ExplicitSelectionOnly);
+    }
+
+    #[test]
+    fn dictionary_key_includes_skk_okuri_prefix() {
+        let no_okuri = ConversionRequest {
+            reading: "か".into(),
+            okuri: None,
+            candidates: Vec::new(),
+            protected_indices: Vec::new(),
+        };
+        assert_eq!(no_okuri.dictionary_key(), "か");
+
+        let with_okuri = ConversionRequest {
+            reading: "か".into(),
+            okuri: Some("く".into()),
+            candidates: Vec::new(),
+            protected_indices: Vec::new(),
+        };
+        assert_eq!(with_okuri.dictionary_key(), "かk");
+    }
+
+    #[test]
+    fn external_candidate_validation_matches_merge_rules() {
+        for text in ["東京", "km/h", "1/2", "(笑)", "a;note"] {
+            let candidate = ConversionCandidate {
+                text: text.into(),
+                annotation: None,
+            };
+            assert!(candidate.validate_external().is_ok(), "{text:?}");
+        }
+        for text in ["", "[注]", "(concat x)", "a\nb", "#0回", "a\\b"] {
+            let candidate = ConversionCandidate {
+                text: text.into(),
+                annotation: None,
+            };
+            assert_eq!(
+                candidate.validate_external(),
+                Err(ConversionError::InvalidCandidate),
+                "{text:?}"
+            );
+        }
+        let annotated = ConversionCandidate {
+            text: "東京".into(),
+            annotation: Some("首都".into()),
+        };
+        assert!(annotated.validate_external().is_ok());
+        for annotation in ["", "[注]", "a\nb", "(concat x)"] {
+            let candidate = ConversionCandidate {
+                text: "東京".into(),
+                annotation: Some(annotation.into()),
+            };
+            assert_eq!(
+                candidate.validate_external(),
+                Err(ConversionError::InvalidCandidate),
+                "{annotation:?}"
+            );
+        }
     }
 }

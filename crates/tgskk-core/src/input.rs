@@ -6,7 +6,7 @@ pub use cskk::{dictionary::CskkDictionary, error::CskkError};
 
 pub use cskk::conversion::{
     ConversionCandidate, ConversionError, ConversionProvider, ConversionRequest,
-    ConversionResponse, LearningPolicy,
+    ConversionResponse, LearningPolicy, MissingConversionProvider,
 };
 pub use cskk::keyevent::CskkKeyEvent;
 pub use cskk::skk_modes::{CompositionMode, InputMode};
@@ -64,6 +64,13 @@ impl InputSession {
 
     pub fn set_conversion_provider(&mut self, provider: Option<Box<dyn ConversionProvider>>) {
         self.context.set_conversion_provider(provider);
+    }
+
+    pub fn set_missing_conversion_provider(
+        &mut self,
+        provider: Option<Box<dyn MissingConversionProvider>>,
+    ) {
+        self.context.set_missing_conversion_provider(provider);
     }
 
     pub fn preview_conversion(&self) -> Option<ConversionRequest> {

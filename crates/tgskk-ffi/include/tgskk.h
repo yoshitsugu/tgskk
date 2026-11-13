@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 typedef struct TgskkZenz TgskkZenz;
+typedef struct TgskkSkkserv TgskkSkkserv;
 typedef struct TgskkRuntime TgskkRuntime;
 typedef struct TgskkSession TgskkSession;
 
@@ -43,6 +44,25 @@ uint8_t tgskk_session_set_zenz(TgskkSession *session, const TgskkZenz *zenz);
  * invalidates pending work and clears context, including for sensitive fields.
  * Neither function performs inference or waits for the worker. */
 uint8_t tgskk_session_context(TgskkSession *session, const char *left, uint8_t enabled);
+
+/* SKK server workers start idle. Only conversions with no local candidates
+ * may wait (0..1000 ms); DNS, network and helper IPC run on the worker thread.
+ * Google uses a lazily spawned --stdio helper with UTF-8; custom servers use
+ * euc-jp or utf-8. Only the reading is transmitted, never left context.
+ * Sessions retain the worker after the handle is freed. NULL in set_skkserv
+ * disables it without changing composition or the local AI provider. */
+TgskkSkkserv *tgskk_skkserv_google_new(const char *executable, uint32_t wait_ms,
+                                     char **error);
+TgskkSkkserv *tgskk_skkserv_custom_new(const char *host, uint16_t port,
+                                     const char *encoding, uint32_t wait_ms,
+                                     char **error);
+void tgskk_skkserv_free(TgskkSkkserv *server);
+char *tgskk_skkserv_take_error(const TgskkSkkserv *server);
+uint8_t tgskk_session_set_skkserv(TgskkSession *session, const TgskkSkkserv *server);
+/* Permission starts disabled and is revoked by reset, unhandled keys, and
+ * set_skkserv. Set before each key according to focus/sensitivity/selection,
+ * independently of AI context. Disabled permission also bypasses the cache. */
+uint8_t tgskk_session_network_allowed(TgskkSession *session, uint8_t allowed);
 
 typedef struct TgskkView {
   uint8_t consumed;

@@ -11,6 +11,7 @@ fi
 cmake --build build/zenz
 ctest --test-dir build/zenz --output-on-failure --no-tests=error
 cargo build --release --locked -p tgskk-ffi -p tgskk-zenz "$@"
+cargo build --release --locked --manifest-path third_party/gskkserv/Cargo.toml --target-dir "$project_root/target" "$@"
 cargo build --release --locked -p tgskk-zenz --examples "$@"
 cmake -S addons/fcitx5 -B build/fcitx5-zenz-test -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DTGSKK_ZENZ_WORKER="$zenz_worker" -DTGSKK_ZENZ_MODEL="$zenz_model"

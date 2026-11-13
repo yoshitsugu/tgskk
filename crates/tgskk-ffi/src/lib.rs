@@ -1,15 +1,19 @@
 //! C ABI for a single input thread. Pointer ownership and lifetimes are defined
 //! in include/tgskk.h; no Rust allocation may be released by the C allocator.
 
+use std::cell::Cell;
 use std::ffi::{CStr, CString, c_char};
 use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use tgskk_zenz::{Assistance, Status, Worker};
 
 use tgskk_core::input::{CskkDictionary, CskkKeyEvent, InputOutcome, InputSession, ModeChange};
+
+mod skkserv;
 
 struct TgskkZenz {
     worker: Worker,
@@ -34,6 +38,7 @@ struct TgskkView {
 
 struct TgskkSession {
     input: InputSession,
+    network_allowed: Rc<Cell<bool>>,
     assistance: Option<Assistance>,
     view: TgskkView,
     committed: CString,
@@ -48,6 +53,7 @@ impl TgskkSession {
     fn new(input: InputSession) -> Result<Self, String> {
         let mut session = Self {
             input,
+            network_allowed: Rc::new(Cell::new(false)),
             assistance: None,
             view: TgskkView {
                 consumed: 0,
@@ -372,6 +378,9 @@ unsafe fn session_action(
     }
     let result = catch_unwind(AssertUnwindSafe(|| {
         let outcome = action(session);
+        if !outcome.consumed {
+            session.network_allowed.set(false);
+        }
         session.update(outcome)?;
         if let Some(assistance) = &session.assistance {
             assistance.prefetch(&session.input);
@@ -427,6 +436,7 @@ unsafe extern "C" fn tgskk_session_choose(
 unsafe extern "C" fn tgskk_session_reset(session: *mut TgskkSession) -> *const TgskkView {
     unsafe {
         session_action(session, |session| {
+            session.network_allowed.set(false);
             if let Some(assistance) = &session.assistance {
                 assistance.reset();
             }
