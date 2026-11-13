@@ -15,6 +15,8 @@ use tgskk_core::input::{CskkDictionary, CskkKeyEvent, InputOutcome, InputSession
 
 mod skkserv;
 
+const PANIC_DIAGNOSTIC: &str = "Rust panic: discard this input session";
+
 #[unsafe(no_mangle)]
 unsafe extern "C" fn tgskk_session_may_process(
     session: *mut TgskkSession,
@@ -35,7 +37,7 @@ unsafe extern "C" fn tgskk_session_may_process(
         Ok(value) => value as i8,
         Err(_) => {
             session.poisoned = true;
-            session.error = diagnostic("Rust panic: discard this input session".into());
+            session.error = diagnostic(PANIC_DIAGNOSTIC.into());
             -1
         }
     }
@@ -413,7 +415,7 @@ unsafe fn session_action(
         }
         Ok(())
     }))
-    .unwrap_or_else(|_| Err("Rust panic: discard this input session".to_owned()));
+    .unwrap_or_else(|_| Err(PANIC_DIAGNOSTIC.to_owned()));
     match result {
         Ok(()) => &session.view,
         Err(message) => {

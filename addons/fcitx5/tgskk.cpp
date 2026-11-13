@@ -33,6 +33,20 @@
 namespace {
 using namespace fcitx;
 
+static_assert(static_cast<uint32_t>(TGSKK_KEY_BACKSPACE) == FcitxKey_BackSpace);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_TAB) == FcitxKey_Tab);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_RETURN) == FcitxKey_Return);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_ESCAPE) == FcitxKey_Escape);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_LEFT) == FcitxKey_Left);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_UP) == FcitxKey_Up);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_RIGHT) == FcitxKey_Right);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_DOWN) == FcitxKey_Down);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_PAGE_UP) == FcitxKey_Page_Up);
+static_assert(static_cast<uint32_t>(TGSKK_KEY_PAGE_DOWN) == FcitxKey_Page_Down);
+static_assert(TGSKK_MOD_SHIFT == static_cast<uint32_t>(KeyState::Shift));
+static_assert(TGSKK_MOD_CONTROL == static_cast<uint32_t>(KeyState::Ctrl));
+static_assert(TGSKK_MOD_ALT == static_cast<uint32_t>(KeyState::Alt));
+
 struct EncodingConstrain {
   using Type = std::string;
   static constexpr std::array<const char *, 2> values{"euc-jp", "utf-8"};
