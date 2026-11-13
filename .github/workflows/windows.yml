@@ -81,6 +81,8 @@ jobs:
           $dictionary = "$pwd/build/windows/SKK-JISYO.L"
           & $test $dll $dictionary
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $test $dll $dictionary --direct-key
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $control = @(& $test $dll $dictionary --rejection-control 2>&1)
           $controlCode = $LASTEXITCODE
           $control | ForEach-Object { Write-Host $_ }

@@ -541,8 +541,10 @@ public:
   }
 };
 int run(int argc, char **argv) {
-  require(argc == 3 || argc == 4, "Usage: test-tsf dll euc-jp-dictionary "
-                                  "[--rejection|--rejection-control]");
+  require(argc == 3 || argc == 4,
+          "Usage: test-tsf dll euc-jp-dictionary "
+          "[--rejection|--rejection-control|--direct-key]");
+  const std::string mode = argc == 4 ? argv[3] : "";
   SetEnvironmentVariableA("TGSKK_DICTIONARY", argv[2]);
   require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
           "COM init");
@@ -611,15 +613,17 @@ int run(int argc, char **argv) {
   require(
       SUCCEEDED(manager->AssociateFocus(store->window, document, &previous)),
       "associate window focus");
-  require(SUCCEEDED(getFactory(serviceId, IID_IClassFactory,
-                               reinterpret_cast<void **>(&factory))),
-          "capturing factory target");
   CaptureRegistration captured;
-  captured.factory = new CapturingFactory(factory);
-  require(SUCCEEDED(CoRegisterClassObject(
-              serviceId, captured.factory, CLSCTX_INPROC_SERVER,
-              REGCLS_MULTIPLEUSE, &captured.cookie)),
-          "capturing factory registration");
+  if (mode == "--direct-key") {
+    require(SUCCEEDED(getFactory(serviceId, IID_IClassFactory,
+                                 reinterpret_cast<void **>(&factory))),
+            "capturing factory target");
+    captured.factory = new CapturingFactory(factory);
+    require(SUCCEEDED(CoRegisterClassObject(
+                serviceId, captured.factory, CLSCTX_INPROC_SERVER,
+                REGCLS_MULTIPLEUSE, &captured.cookie)),
+            "capturing factory registration");
+  }
   GUID profileId = {0x70c846ab,
                     0x9fb5,
                     0x43cb,
@@ -660,29 +664,32 @@ int run(int argc, char **argv) {
   require(SUCCEEDED(manager->QueryInterface(IID_ITfKeystrokeMgr,
                                             reinterpret_cast<void **>(&keys))),
           "key routing");
-  ITfKeyEventSink *direct = captured.factory->sink;
-  require(direct != nullptr, "capture active TSF key sink");
-  BYTE controlState[256] = {};
-  controlState[VK_CONTROL] = controlState[VK_LCONTROL] = 0x80;
-  require(SetKeyboardState(controlState), "direct control key state");
-  const LPARAM controlScan = 1 | (MapVirtualKeyW('C', MAPVK_VK_TO_VSC) << 16);
-  BOOL eligible = TRUE, consumed = TRUE;
-  require(
-      SUCCEEDED(direct->OnTestKeyDown(context, 'C', controlScan, &eligible)) &&
-          !eligible,
-      "Ctrl+C was eligible");
-  const auto beforeShortcut = store->startedCompositions;
-  store->refuseComposition = true;
-  require(SUCCEEDED(direct->OnKeyDown(context, 'C', controlScan, &consumed)) &&
-              !consumed,
-          "direct Ctrl+C was consumed");
-  require(store->startedCompositions == beforeShortcut,
-          "unhandled key started a composition");
-  require(store->text.empty(), "unhandled key changed document");
-  store->refuseComposition = false;
-  require(SUCCEEDED(captured.close()), "revoke capturing factory");
-  BYTE clearState[256] = {};
-  require(SetKeyboardState(clearState), "restore key state");
+  if (mode == "--direct-key") {
+    ITfKeyEventSink *direct = captured.factory->sink;
+    require(direct != nullptr, "capture active TSF key sink");
+    BYTE controlState[256] = {};
+    controlState[VK_CONTROL] = controlState[VK_LCONTROL] = 0x80;
+    require(SetKeyboardState(controlState), "direct control key state");
+    const LPARAM controlScan = 1 | (MapVirtualKeyW('C', MAPVK_VK_TO_VSC) << 16);
+    BOOL eligible = TRUE, consumed = TRUE;
+    require(SUCCEEDED(
+                direct->OnTestKeyDown(context, 'C', controlScan, &eligible)) &&
+                !eligible,
+            "Ctrl+C was eligible");
+    const auto beforeShortcut = store->startedCompositions;
+    store->refuseComposition = true;
+    require(
+        SUCCEEDED(direct->OnKeyDown(context, 'C', controlScan, &consumed)) &&
+            !consumed,
+        "direct Ctrl+C was consumed");
+    require(store->startedCompositions == beforeShortcut,
+            "unhandled key started a composition");
+    require(store->text.empty(), "unhandled key changed document");
+    store->refuseComposition = false;
+    require(SUCCEEDED(captured.close()), "revoke capturing factory");
+    BYTE clearState[256] = {};
+    require(SetKeyboardState(clearState), "restore key state");
+  }
   auto key = [&](UINT code, bool shift = false, bool win = false) {
     BYTE state[256] = {};
     if (shift)
@@ -742,7 +749,6 @@ int run(int argc, char **argv) {
     compositions->Release();
     pump();
   };
-  const std::string mode = argc == 4 ? argv[3] : "";
   if (mode == "--rejection-control") {
     store->refuseComposition = true;
     auto *probe = new RefusalProbe(context);
@@ -762,7 +768,7 @@ int run(int argc, char **argv) {
     store->refuseComposition = false;
     require(key('A'), "input after rejected composition");
     require(store->text == L"あ", "rejected composition advanced input state");
-  } else {
+  } else if (mode.empty()) {
     require(key('K', true), "uppercase kana rejected");
     require(key('A'), "kana continuation");
     require(store->text == L"▽か", "wrong preedit");
@@ -952,10 +958,12 @@ int run(int argc, char **argv) {
 int main(int argc, char **argv) {
   HMODULE dll = nullptr;
   try {
-    require(argc == 3 || argc == 4, "Usage: test-tsf dll euc-jp-dictionary "
-                                    "[--rejection|--rejection-control]");
+    require(argc == 3 || argc == 4,
+            "Usage: test-tsf dll euc-jp-dictionary "
+            "[--rejection|--rejection-control|--direct-key]");
     require(argc == 3 || std::string(argv[3]) == "--rejection" ||
-                std::string(argv[3]) == "--rejection-control",
+                std::string(argv[3]) == "--rejection-control" ||
+                std::string(argv[3]) == "--direct-key",
             "unknown test mode");
     dll = LoadLibraryA(argv[1]);
     require(dll != nullptr, "retain test DLL");
