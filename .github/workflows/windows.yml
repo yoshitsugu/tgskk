@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
       - name: Prepare verified worker sources and model
         run: python scripts/setup-zenz.py --prepare-only
       - name: Build Windows AI worker
@@ -29,6 +31,11 @@ jobs:
         run: |
           $env:TGSKK_SERIAL_REFERENCE = "$pwd/build/zenz-windows/Release/test-zenz-serial-reference.exe"
           python native/zenz/tests/check_worker.py build/zenz-windows/Release/tgskk-zenz-worker.exe build/models/zenz-v3.2-small-Q5_K_M.gguf
+      - name: Test Rust IPC with the real Windows worker
+        run: |
+          $env:TGSKK_TEST_WORKER = "$pwd/build/zenz-windows/Release/tgskk-zenz-worker.exe"
+          $env:TGSKK_TEST_MODEL = "$pwd/build/models/zenz-v3.2-small-Q5_K_M.gguf"
+          cargo +1.88.0 test -p tgskk-zenz --test windows_worker --locked -- --ignored
   desktop:
     runs-on: windows-2025
     timeout-minutes: 30
@@ -42,6 +49,8 @@ jobs:
         run: cargo +1.88.0 test --workspace --locked
       - name: Test CSKK with portable keysyms
         run: cargo +1.88.0 test --manifest-path third_party/cskk/Cargo.toml --workspace --features cskk/capi --target-dir target --locked
+      - name: Test portable Google SKK helper
+        run: cargo +1.88.0 test --manifest-path third_party/gskkserv/Cargo.toml --target-dir target --locked
       - name: Build Windows core
         run: cargo +1.88.0 build --release -p tgskk-ffi --locked
       - name: Build TSF and test harness
