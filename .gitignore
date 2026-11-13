@@ -1,0 +1,45 @@
+# Build outputs and downloaded dependencies
+/target/
+/build/
+/third_party/cskk/target/
+*.gguf
+
+# Local development notes and assistant settings
+/tmp/
+/.agents/
+/.codex/
+/.claude/
+/.claude.json
+/.aws/
+/.idea/
+/.vscode/
+
+# Credentials and local environment
+.env
+.env.*
+!.env.example
+!.env.sample
+.netrc
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Learned input and backups
+SKK-JISYO.user
+SKK-JISYO.user.*
+*.BAK
+
+# Diagnostic output
+*.log
+/core
+/core.[0-9]*
+
+# Editor and OS files
+/.markdown-preview.html
+__pycache__/
+*.pyc
+*.swp
+*.swo
+*~
+.DS_Store
