@@ -15,6 +15,20 @@ IBus版だけを入れる場合、fcitx5は依存として要求しません。
 | fcitx5版 | `tgskk-git` | `tgskk` |
 | IBus版 | `tgskk-ibus-git` | `tgskk-ibus` |
 
+## Releaseから取得
+
+[Releases](https://github.com/yoshitsugu/tgskk/releases)で使用するOSの`tgskk-v<バージョン>-<OS>-x86_64.tar.gz`と`SHA256SUMS`を取得します。
+ダウンロードしたディレクトリで、選んだアーカイブのチェックサムを確認して展開します。
+
+```sh
+# Ubuntu 24.04の例
+sha256sum --ignore-missing --check SHA256SUMS
+tar -xzf tgskk-v0.1.0-ubuntu-24.04-x86_64.tar.gz
+```
+
+その後、下記のインストール手順で共通パッケージと使用するフロントエンドを導入します。
+Ubuntu用とDebian用のパッケージはファイル名が同じため、異なるOSのアーカイブは別のディレクトリに展開してください。
+
 ## パッケージの作成
 
 Dockerを使い、リポジトリで次を実行します。

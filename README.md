@@ -22,6 +22,9 @@
 
 ## インストール
 
+配布パッケージは[Releases](https://github.com/yoshitsugu/tgskk/releases)から取得できます。
+使用するOSのアーカイブを選び、導入方法は[配布パッケージ](docs/distribution.md#インストール)を参照してください。
+
 Arch Linux用PKGBUILDと、Debian 13、Ubuntu 24.04／26.04 LTS向けfcitx5版・IBus版の`.deb`の作成手順は[配布パッケージ](docs/distribution.md)を参照してください。
 パッケージには推論用プログラムも含み、モデルは`tgskk-setup-model`で取得できます。
 
