@@ -1,0 +1,23 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: tgskk
+Source: https://github.com/yoshitsugu/tgskk
+
+Files: *
+Copyright: 2026 yoshitsugu
+License: GPL-3+
+ See /usr/share/common-licenses/GPL-3.
+
+Files: third_party/cskk/*
+Copyright: CSKK contributors (see third_party/cskk/LICENSE.txt)
+License: GPL-3+
+ See /usr/share/common-licenses/GPL-3.
+
+Files: third_party/gskkserv/*
+Copyright: Kota Yoshitsugu
+License: Apache-2.0
+ See /usr/share/common-licenses/Apache-2.0.
+
+Files: build/llama.cpp-*/**
+Copyright: llama.cpp contributors
+License: MIT
+ The upstream license is installed in /usr/share/doc/tgskk/zenz/llama-LICENSE.

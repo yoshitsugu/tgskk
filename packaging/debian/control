@@ -1,0 +1,19 @@
+Source: tgskk
+Section: utils
+Priority: optional
+Maintainer: yoshitsugu <yoshitsugu@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13), cmake (>= 3.20), ninja-build,
+ g++, pkg-config, python3 (>= 3.12), cargo (>= 1.88), rustc (>= 1.88),
+ libfcitx5core-dev (>= 5.1.7), libxkbcommon-dev, gettext
+Standards-Version: 4.7.0
+Homepage: https://github.com/yoshitsugu/tgskk
+Rules-Requires-Root: no
+
+Package: tgskk
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, fcitx5 (>= 5.1.7), python3 (>= 3.12), skkdic
+Description: SKK input method for fcitx5 with local context ranking
+ Uses CSKK dictionaries for immediate conversion, optional local AI ranking,
+ and a bundled Google SKK server for readings without local candidates.
+ Includes the CPU inference worker; model weights are installed separately
+ with tgskk-setup-model.

@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+
+# Distribution LTO changes the pinned inference kernels' reference scores.
+export DEB_BUILD_MAINT_OPTIONS = optimize=-lto
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+override_dh_auto_build:
+	bash scripts/build-dist.sh build
+
+override_dh_auto_test:
+	bash scripts/build-dist.sh check
+
+override_dh_auto_install:
+	bash scripts/build-dist.sh install $(CURDIR)/debian/tgskk
+
+override_dh_auto_clean:
+	# Prepared dependencies are inputs to the offline build.
+	rm -rf target build/fcitx5 build/zenz

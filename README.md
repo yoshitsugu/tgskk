@@ -17,7 +17,10 @@ geditでの実動作を録画しています。クリックでMP4を開きます
 
 ## インストール
 
-Rust toolchain、C/C++20対応コンパイラー、CMake、libxkbcommonとfcitx5 5.1.22以降の開発ファイルが必要です。
+Arch Linux用PKGBUILDと、Debian 13、Ubuntu 24.04／26.04 LTS向け`.deb`の作成手順は[配布パッケージ](docs/distribution.md)を参照してください。
+パッケージには推論用プログラムも含み、モデルは`tgskk-setup-model`で取得できます。
+
+ソースからビルドする場合は、Rust 1.88以降、C/C++20対応コンパイラー、CMake、libxkbcommonとfcitx5 5.1.7以降の開発ファイルが必要です。
 SKK辞書も用意してください。既定では`/usr/share/skk/SKK-JISYO.L`（EUC-JP）を読みます。
 
 ```sh

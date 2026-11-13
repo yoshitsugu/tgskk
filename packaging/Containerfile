@@ -1,0 +1,21 @@
+ARG BASE=ubuntu:24.04
+FROM rust:1.88.0-slim-bookworm AS rust
+FROM ${BASE}
+RUN if command -v apt-get >/dev/null; then \
+      export DEBIAN_FRONTEND=noninteractive; \
+      apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build pkg-config python3 git ca-certificates \
+        libfcitx5core-dev fcitx5 fcitx5-modules libxkbcommon-dev gettext \
+        debhelper devscripts fakeroot skkdic && \
+      rm -rf /var/lib/apt/lists/*; \
+    else \
+      pacman -Syu --noconfirm --needed base-devel cmake ninja pkgconf python git \
+        ca-certificates fcitx5 libxkbcommon skk-jisyo namcap; \
+    fi
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+ENV PATH="/usr/local/cargo/bin:${PATH}" \
+    CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup \
+    CARGO_BUILD_JOBS=2 CMAKE_BUILD_PARALLEL_LEVEL=2
+RUN useradd --create-home builder
+WORKDIR /work

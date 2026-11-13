@@ -1,0 +1,46 @@
+# Maintainer: yoshitsugu
+# shellcheck shell=bash disable=SC2034,SC2154
+pkgname=tgskk-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='SKK input method for fcitx5 with local AI ranking and Google fallback'
+arch=('x86_64')
+url='https://github.com/yoshitsugu/tgskk'
+license=('GPL-3.0-or-later')
+depends=('fcitx5>=5.1.7' 'libxkbcommon' 'gcc-libs' 'glibc' 'python>=3.12' 'skk-jisyo')
+makedepends=('git' 'rust>=1.88' 'cargo>=1.88' 'cmake' 'ninja' 'pkgconf')
+provides=('tgskk')
+conflicts=('tgskk')
+# Mixed Rust/C archives cannot use makepkg's GCC LTO; Cargo manages Rust LTO.
+options=('!debug' '!lto')
+source=('tgskk::git+https://github.com/yoshitsugu/tgskk.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/tgskk" || return
+  if [[ -d .git ]]; then
+    printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  else
+    printf '%s' "$pkgver"
+  fi
+}
+
+prepare() {
+  cd "$srcdir/tgskk" || return
+  bash scripts/build-dist.sh prepare
+}
+
+build() {
+  cd "$srcdir/tgskk" || return
+  bash scripts/build-dist.sh build
+}
+
+check() {
+  cd "$srcdir/tgskk" || return
+  bash scripts/build-dist.sh check
+}
+
+package() {
+  cd "$srcdir/tgskk" || return
+  bash scripts/build-dist.sh install "$pkgdir"
+}

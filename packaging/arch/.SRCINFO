@@ -1,0 +1,27 @@
+pkgbase = tgskk-git
+	pkgdesc = SKK input method for fcitx5 with local AI ranking and Google fallback
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/yoshitsugu/tgskk
+	arch = x86_64
+	license = GPL-3.0-or-later
+	makedepends = git
+	makedepends = rust>=1.88
+	makedepends = cargo>=1.88
+	makedepends = cmake
+	makedepends = ninja
+	makedepends = pkgconf
+	depends = fcitx5>=5.1.7
+	depends = libxkbcommon
+	depends = gcc-libs
+	depends = glibc
+	depends = python>=3.12
+	depends = skk-jisyo
+	provides = tgskk
+	conflicts = tgskk
+	options = !debug
+	options = !lto
+	source = tgskk::git+https://github.com/yoshitsugu/tgskk.git
+	sha256sums = SKIP
+
+pkgname = tgskk-git
