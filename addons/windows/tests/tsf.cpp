@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <inputscope.h>
 #include <msctf.h>
 #include <stdexcept>
 #include <string>
@@ -14,17 +15,76 @@ static void require(bool condition, const char *reason) {
     throw std::runtime_error(reason);
   }
 }
+class Scope final : public ITfInputScope {
+  ULONG refs = 1;
+  InputScope value;
+
+public:
+  explicit Scope(InputScope scope) : value(scope) {}
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
+    if (!out)
+      return E_POINTER;
+    *out = nullptr;
+    if (id != IID_IUnknown && id != IID_ITfInputScope)
+      return E_NOINTERFACE;
+    *out = static_cast<ITfInputScope *>(this);
+    AddRef();
+    return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG remaining = --refs;
+    if (!remaining)
+      delete this;
+    return remaining;
+  }
+  HRESULT STDMETHODCALLTYPE GetInputScopes(InputScope **out,
+                                           UINT *count) override {
+    *count = 0;
+    *out = static_cast<InputScope *>(CoTaskMemAlloc(sizeof(InputScope)));
+    if (!*out)
+      return E_OUTOFMEMORY;
+    **out = value;
+    *count = 1;
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetPhrase(BSTR **out, UINT *count) override {
+    *out = nullptr;
+    *count = 0;
+    return E_NOTIMPL;
+  }
+  HRESULT STDMETHODCALLTYPE GetRegularExpression(BSTR *out) override {
+    *out = nullptr;
+    return E_NOTIMPL;
+  }
+  HRESULT STDMETHODCALLTYPE GetSRGS(BSTR *out) override {
+    *out = nullptr;
+    return E_NOTIMPL;
+  }
+  HRESULT STDMETHODCALLTYPE GetXML(BSTR *out) override {
+    *out = nullptr;
+    return E_NOTIMPL;
+  }
+};
 class Store final : public ITextStoreACP,
                     public ITfContextOwnerCompositionSink {
   ULONG refs = 1;
   ITextStoreACPSink *sink = nullptr;
   bool locked = false;
   DWORD pendingLock = 0;
+  bool scopeRequested = false;
+  void attributes(ULONG count, const TS_ATTRID *ids) {
+    scopeRequested = false;
+    for (ULONG i = 0; i < count; ++i)
+      scopeRequested |= ids[i] == GUID_PROP_INPUTSCOPE;
+  }
 
 public:
   std::wstring text;
   LONG start = 0, end = 0;
   bool refuseComposition = false, failSelection = false, denyLock = false;
+  InputScope scope = IS_DEFAULT;
+  bool scopeFailure = false;
   HWND window = nullptr;
   ~Store() {
     if (sink)
@@ -187,13 +247,15 @@ public:
       DWORD, IDataObject *, LONG *, LONG *, TS_TEXTCHANGE *) override {
     return E_NOTIMPL;
   }
-  HRESULT STDMETHODCALLTYPE RequestSupportedAttrs(DWORD, ULONG,
-                                                  const TS_ATTRID *) override {
+  HRESULT STDMETHODCALLTYPE
+  RequestSupportedAttrs(DWORD, ULONG count, const TS_ATTRID *ids) override {
+    attributes(count, ids);
     return S_OK;
   }
-  HRESULT STDMETHODCALLTYPE RequestAttrsAtPosition(LONG, ULONG,
-                                                   const TS_ATTRID *,
+  HRESULT STDMETHODCALLTYPE RequestAttrsAtPosition(LONG, ULONG count,
+                                                   const TS_ATTRID *ids,
                                                    DWORD) override {
+    attributes(count, ids);
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE RequestAttrsTransitioningAtPosition(
@@ -209,9 +271,21 @@ public:
     *offset = 0;
     return S_OK;
   }
-  HRESULT STDMETHODCALLTYPE RetrieveRequestedAttrs(ULONG, TS_ATTRVAL *,
+  HRESULT STDMETHODCALLTYPE RetrieveRequestedAttrs(ULONG capacity,
+                                                   TS_ATTRVAL *values,
                                                    ULONG *count) override {
     *count = 0;
+    if (scopeFailure)
+      return E_FAIL;
+    if (scopeRequested && capacity) {
+      values[0].idAttr = GUID_PROP_INPUTSCOPE;
+      values[0].dwOverlapId = 0;
+      VariantInit(&values[0].varValue);
+      values[0].varValue.vt = VT_UNKNOWN;
+      values[0].varValue.punkVal = new Scope(scope);
+      *count = 1;
+      scopeRequested = false;
+    }
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE GetEndACP(LONG *value) override {
@@ -267,6 +341,13 @@ public:
       sink->OnTextChange(0, &change);
       sink->OnSelectionChange();
     }
+  }
+  void setScope(InputScope value, bool fail = false) {
+    scope = value;
+    scopeFailure = fail;
+    if (sink)
+      sink->OnAttrsChange(0, static_cast<LONG>(text.size()), 1,
+                          &GUID_PROP_INPUTSCOPE);
   }
 };
 void pump() {
@@ -443,6 +524,18 @@ int run(int argc, char **argv) {
   store->refuseComposition = false;
   require(!key('K', false, true), "Win shortcut consumed");
   require(store->text.empty(), "Win shortcut changed document");
+  for (auto scope : {IS_PASSWORD, IS_PRIVATE}) {
+    store->setScope(scope);
+    pump();
+    require(!key('K', true), "sensitive field consumed input");
+    require(store->text.empty(), "sensitive field changed document");
+  }
+  store->setScope(IS_DEFAULT, true);
+  pump();
+  require(!key('K', true), "unknown field scope consumed input");
+  require(store->text.empty(), "unknown field scope changed document");
+  store->setScope(IS_DEFAULT);
+  pump();
 
   require(key('K', true) && key('O') && key('U') && key(VK_SPACE),
           "candidate conversion");

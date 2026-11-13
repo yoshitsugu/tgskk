@@ -25,7 +25,7 @@ target_link_libraries(test-windows-core PRIVATE tgskk-core ${TGSKK_WINDOWS_LIBRA
 enable_testing()
 add_test(NAME windows-core COMMAND test-windows-core "${TGSKK_ROOT}/examples/SKK-JISYO.demo.utf8")
 
-add_executable(test-windows-tsf tests/tsf.cpp)
+add_executable(test-windows-tsf tests/tsf.cpp inputscope_guids.cpp)
 target_compile_definitions(test-windows-tsf PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(test-windows-tsf PRIVATE ole32 oleaut32 uuid user32)
 add_executable(test-windows-child tests/helper.cpp)

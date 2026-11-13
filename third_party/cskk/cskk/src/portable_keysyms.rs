@@ -60,24 +60,50 @@ mod tests {
     #[test]
     fn names_and_characters_match_native_keysyms() {
         let mut differences = Vec::new();
+        let mut newer_names = Vec::new();
         for &(name, value) in NAMES {
             let native = xkbcommon::xkb::keysym_from_name(name, xkbcommon::xkb::KEYSYM_NO_FLAGS);
-            assert_eq!(keysym_from_name(name, 0), native, "{name}");
             let key = Keysym::from(value);
-            if keysym_to_utf8(key) != xkbcommon::xkb::keysym_to_utf8(key) {
-                differences.push((name, value, xkbcommon::xkb::keysym_to_utf8(key)));
+            assert_eq!(keysym_from_name(name, 0), key, "{name}");
+            if native == Keysym::NoSymbol && key != Keysym::NoSymbol {
+                newer_names.push(name);
+            } else {
+                assert_eq!(key, native, "{name}");
+            }
+            let native_text = xkbcommon::xkb::keysym_to_utf8(key);
+            let old_numeric_mapping = native_text.is_empty()
+                && (keysyms::KEY_XF86Numeric0..=keysyms::KEY_XF86NumericPound).contains(&value);
+            if keysym_to_utf8(key) != native_text && !old_numeric_mapping {
+                differences.push((name, value, native_text));
             }
             assert_eq!(keysym_from_name(&keysym_get_name(key), 0), key, "{name}");
         }
+        if !newer_names.is_empty() {
+            eprintln!("Names newer than the installed libxkbcommon: {newer_names:?}");
+        }
         assert!(differences.is_empty(), "{:?}", differences);
+        for (offset, expected) in "0123456789*#".chars().enumerate() {
+            assert_eq!(
+                keysym_to_utf8(Keysym::from(keysyms::KEY_XF86Numeric0 + offset as u32)),
+                expected.to_string()
+            );
+        }
         for value in 0..=255 {
             let name = format!("U{:04X}", value);
-            assert_eq!(
-                keysym_from_name(&name, 0),
-                xkbcommon::xkb::keysym_from_name(&name, 0),
-                "{}",
-                name
-            );
+            let portable = keysym_from_name(&name, 0);
+            let expected = match value {
+                0 => 0,
+                0x08..=0x0b | 0x0d | 0x1b => 0xff00 | value,
+                0x7f => 0xffff,
+                0x20..=0x7e | 0xa0..=0xff => value,
+                _ => 0x01000000 | value,
+            };
+            assert_eq!(portable.raw(), expected, "{name}");
+            let native = xkbcommon::xkb::keysym_from_name(&name, 0);
+            // Older releases rejected Unicode names for control characters.
+            if native != Keysym::NoSymbol || value == 0 {
+                assert_eq!(portable, native, "{name}");
+            }
         }
         for name in [
             "U0041",
