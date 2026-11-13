@@ -547,6 +547,34 @@ int run(int argc, char **argv) {
     pump();
     return eaten;
   };
+  auto terminate = [&](bool required) {
+    ITfContextComposition *compositions = nullptr;
+    require(SUCCEEDED(context->QueryInterface(
+                IID_ITfContextComposition,
+                reinterpret_cast<void **>(&compositions))),
+            "context compositions");
+    IEnumITfCompositionView *items = nullptr;
+    require(SUCCEEDED(compositions->EnumCompositions(&items)),
+            "enumerate compositions");
+    ITfCompositionView *view = nullptr;
+    ULONG fetched = 0;
+    require(SUCCEEDED(items->Next(1, &view, &fetched)), "composition view");
+    require(!required || fetched == 1, "no composition to terminate");
+    if (view) {
+      ITfContextOwnerCompositionServices *owner = nullptr;
+      require(SUCCEEDED(context->QueryInterface(
+                  IID_ITfContextOwnerCompositionServices,
+                  reinterpret_cast<void **>(&owner))),
+              "owner composition services");
+      require(SUCCEEDED(owner->TerminateComposition(view)),
+              "forced composition termination");
+      owner->Release();
+      view->Release();
+    }
+    items->Release();
+    compositions->Release();
+    pump();
+  };
   require(key('K', true), "uppercase kana rejected");
   require(key('A'), "kana continuation");
   require(store->text == L"▽か", "wrong preedit");
@@ -573,6 +601,17 @@ int run(int argc, char **argv) {
   require(!key('K', true), "unknown field scope consumed input");
   require(store->text.empty(), "unknown field scope changed document");
   store->setScope(IS_DEFAULT);
+  pump();
+
+  require(key('K', true) && key('A'), "start before forced termination");
+  terminate(true);
+  require(store->text.empty(), "forced termination retained preedit");
+  require(key('K', true) && key('A'), "start before external edit");
+  store->replace(L"外部");
+  pump();
+  terminate(false);
+  require(store->text == L"外部", "termination erased external edits");
+  store->replace(L"");
   pump();
 
   require(key('K', true) && key('O') && key('U') && key(VK_SPACE),

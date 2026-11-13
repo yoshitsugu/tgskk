@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "tgskk.h"
 #include "tsf_compat.h"
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
@@ -78,7 +79,46 @@ struct CompositionLife {
   bool live = true;
   bool cleanupQueued = false;
   bool erase = true;
+  std::wstring preedit;
 };
+HRESULT eraseComposition(ITfComposition *composition, TfEditCookie cookie,
+                         const std::wstring &expected) {
+  std::vector<wchar_t> text;
+  try {
+    text.resize(expected.size() + 1);
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+  ITfRange *range = nullptr;
+  ITfContext *context = nullptr;
+  TF_SELECTION selection{};
+  ULONG fetched = 0, length = 0;
+  HRESULT result = composition->GetRange(&range);
+  if (SUCCEEDED(result))
+    result = range->GetText(cookie, 0, text.data(),
+                            static_cast<ULONG>(text.size()), &length);
+  if (SUCCEEDED(result) &&
+      (length != expected.size() ||
+       !std::equal(expected.begin(), expected.end(), text.begin()))) {
+    release(range);
+    return S_FALSE;
+  }
+  if (SUCCEEDED(result))
+    result = range->GetContext(&context);
+  if (SUCCEEDED(result))
+    result = context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection,
+                                   &fetched);
+  if (SUCCEEDED(result) && (fetched != 1 || !selection.range))
+    result = E_FAIL;
+  if (SUCCEEDED(result))
+    result = range->SetText(cookie, 0, L"", 0);
+  if (SUCCEEDED(result))
+    result = context->SetSelection(cookie, 1, &selection);
+  release(selection.range);
+  release(context);
+  release(range);
+  return result;
+}
 class Cleanup final : public ITfEditSession {
   std::atomic<ULONG> refs{1};
   ITfComposition *composition;
@@ -117,29 +157,9 @@ public:
     life->cleanupQueued = false;
     if (!life->live)
       return S_OK;
-    ITfRange *range = nullptr;
-    ITfContext *context = nullptr;
-    TF_SELECTION selection{};
-    ULONG fetched = 0;
-    HRESULT result = S_OK;
-    if (life->erase) {
-      result = composition->GetRange(&range);
-      if (SUCCEEDED(result))
-        result = range->GetContext(&context);
-      if (SUCCEEDED(result))
-        result = context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1,
-                                       &selection, &fetched);
-      if (SUCCEEDED(result) && (fetched != 1 || !selection.range))
-        result = E_FAIL;
-      if (SUCCEEDED(result)) {
-        result = range->SetText(cookie, 0, L"", 0);
-      }
-      if (SUCCEEDED(result))
-        result = context->SetSelection(cookie, 1, &selection);
-      release(selection.range);
-      release(context);
-      release(range);
-    }
+    HRESULT result = life->erase
+                         ? eraseComposition(composition, cookie, life->preedit)
+                         : S_OK;
     const HRESULT ended = composition->EndComposition(cookie);
     if (SUCCEEDED(ended))
       life->live = false;
@@ -675,11 +695,19 @@ public:
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE
-  OnCompositionTerminated(TfEditCookie, ITfComposition *value) override {
+  OnCompositionTerminated(TfEditCookie cookie, ITfComposition *value) override {
     auto found = lifetimes.find(value);
+    std::shared_ptr<CompositionLife> life;
     if (found != lifetimes.end()) {
-      found->second->live = false;
+      life = found->second;
+      life->live = false;
       lifetimes.erase(found);
+    }
+    HRESULT result = S_OK;
+    if (!editing && life && life->erase) {
+      editing = true;
+      result = eraseComposition(value, cookie, life->preedit);
+      editing = false;
     }
     if (!editing && value == composition) {
       release(composition);
@@ -688,7 +716,9 @@ public:
       if (!manager)
         release(active);
     }
-    return S_OK;
+    return FAILED(result)
+               ? reportFailure("forced composition termination", result)
+               : S_OK;
   }
   HRESULT STDMETHODCALLTYPE OnSetThreadFocus() override {
     if (cancelPending)
@@ -885,8 +915,12 @@ public:
       if (changed)
         result = range->SetText(cookie, 0, combined.data(),
                                 static_cast<LONG>(combined.size()));
-      if (SUCCEEDED(result))
+      if (SUCCEEDED(result)) {
         eaten = consumed;
+        auto found = lifetimes.find(composition);
+        if (found != lifetimes.end())
+          found->second->preedit = preedit;
+      }
       if (SUCCEEDED(result) && preedit.empty()) {
         result = finish(cookie);
       } else if (SUCCEEDED(result) && !committed.empty()) {

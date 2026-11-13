@@ -54,6 +54,32 @@ pub fn keysym_to_utf8(key: Keysym) -> String {
     }
 }
 
+#[cfg(test)]
+mod portable_contract_tests {
+    use super::*;
+
+    #[test]
+    fn protocol_names_and_unicode_values_are_portable() {
+        for (name, value, text) in [
+            ("Return", 0xff0d, "\r"),
+            ("a", 0x61, "a"),
+            ("Greek_alpha", 0x07e1, "α"),
+            ("U03B1", 0x010003b1, "α"),
+            ("U3042", 0x01003042, "あ"),
+            ("U0001F600", 0x0101f600, "😀"),
+            ("XF86Numeric1", 0x10081201, "1"),
+        ] {
+            let key = keysym_from_name(name, 0);
+            assert_eq!(key.raw(), value, "{name}");
+            assert_eq!(keysym_to_utf8(key), text, "{name}");
+            assert_eq!(keysym_from_name(&keysym_get_name(key), 0), key, "{name}");
+        }
+        for name in ["nonexistent-key", "U00110000", "U0000"] {
+            assert_eq!(keysym_from_name(name, 0), Keysym::NoSymbol, "{name}");
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

@@ -40,6 +40,8 @@ jobs:
         run: rustup toolchain install 1.88.0 --profile minimal
       - name: Test common core
         run: cargo +1.88.0 test --workspace --locked
+      - name: Test CSKK with portable keysyms
+        run: cargo +1.88.0 test --manifest-path third_party/cskk/Cargo.toml --workspace --features cskk/capi --target-dir target --locked
       - name: Build Windows core
         run: cargo +1.88.0 build --release -p tgskk-ffi --locked
       - name: Build TSF and test harness
