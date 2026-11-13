@@ -412,7 +412,8 @@ struct RegistrationGuard {
   }
 };
 int run(int argc, char **argv) {
-  require(argc == 3, "Usage: test-tsf dll euc-jp-dictionary");
+  require(argc == 3 || argc == 4,
+          "Usage: test-tsf dll euc-jp-dictionary [--activation-only]");
   SetEnvironmentVariableA("TGSKK_DICTIONARY", argv[2]);
   require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
           "COM init");
@@ -445,6 +446,7 @@ int run(int argc, char **argv) {
   factory->Release();
   service->Release();
   service = nullptr;
+  require(unload() == S_OK, "manual COM ownership leaked");
   require(registration && unregistration, "registration exports");
   require(SUCCEEDED(registration()), "TSF registration");
   cleanup.active = true;
@@ -579,132 +581,137 @@ int run(int argc, char **argv) {
     compositions->Release();
     pump();
   };
-  require(key('K', true), "uppercase kana rejected");
-  require(key('A'), "kana continuation");
-  require(store->text == L"▽か", "wrong preedit");
-  key(VK_ESCAPE);
-  require(SUCCEEDED(manager->SetFocus(emptyDocument)), "leave document");
-  pump();
-  require(SUCCEEDED(manager->SetFocus(document)), "restore document");
-  pump();
-  require(store->text.empty(), "focus retained preedit");
-  store->refuseComposition = true;
-  require(!key('K', true), "rejected composition consumed key");
-  require(store->text.empty(), "rejected composition changed document");
-  store->refuseComposition = false;
-  require(!key('K', false, true), "Win shortcut consumed");
-  require(store->text.empty(), "Win shortcut changed document");
-  for (auto scope : {IS_PASSWORD, IS_PRIVATE}) {
-    store->setScope(scope);
+  if (argc == 3) {
+    require(key('K', true), "uppercase kana rejected");
+    require(key('A'), "kana continuation");
+    require(store->text == L"▽か", "wrong preedit");
+    key(VK_ESCAPE);
+    require(SUCCEEDED(manager->SetFocus(emptyDocument)), "leave document");
     pump();
-    require(!key('K', true), "sensitive field consumed input");
-    require(store->text.empty(), "sensitive field changed document");
-  }
-  store->setScope(IS_DEFAULT, true);
-  pump();
-  require(!key('K', true), "unknown field scope consumed input");
-  require(store->text.empty(), "unknown field scope changed document");
-  store->setScope(IS_DEFAULT);
-  pump();
-
-  require(key('K', true) && key('A'), "start before forced termination");
-  terminate(true);
-  require(store->text.empty(), "forced termination retained preedit");
-  require(key('K', true) && key('A'), "start before external edit");
-  store->replace(L"外部");
-  pump();
-  terminate(false);
-  require(store->text == L"外部", "termination erased external edits");
-  store->replace(L"");
-  pump();
-
-  require(key('K', true) && key('O') && key('U') && key(VK_SPACE),
-          "candidate conversion");
-  require(store->text == L"▼候補01", "first inline candidate");
-  require(key(VK_NEXT), "inline Page_Down propagated");
-  require(store->text == L"▼候補05", "first candidate page");
-  require(key(VK_NEXT), "list Page_Down propagated");
-  require(store->text == L"▼候補12", "next candidate page");
-  require(key(VK_NEXT), "last-page Page_Down propagated");
-  require(store->text == L"▼候補12", "Page_Down passed last page");
-  require(key(VK_PRIOR), "list Page_Up propagated");
-  require(store->text == L"▼候補05", "previous candidate page");
-  require(key('X'), "candidate page previous");
-  require(store->text == L"▼候補04", "return to inline candidate");
-  require(key(VK_PRIOR), "inline Page_Up propagated");
-  require(store->text == L"▼候補04", "inline Page_Up changed candidate");
-  require(key(VK_DOWN) && key('3'), "numeric candidate selection");
-  require(store->text == L"候補07", "numeric selection chose wrong candidate");
-  store->replace(L"");
-  pump();
-
-  store->denyLock = true;
-  require(!key('K', true), "unavailable edit lock consumed key");
-  require(store->text.empty(), "unavailable edit lock changed document");
-  store->denyLock = false;
-  require(key('A'), "start after unavailable edit lock");
-  require(store->text == L"あ", "unavailable edit lock advanced input state");
-  require(key('K', true) && key('A'), "start before caret movement");
-  store->move(0);
-  pump();
-  require(store->text == L"あ", "caret movement retained stale preedit");
-  require(key('I'), "input after caret movement");
-  require(store->text == L"いあ", "input used old caret position");
-  store->replace(L"");
-  pump();
-  require(key('K', true) && key('A'), "start before delayed cleanup");
-  store->holdAsync = true;
-  require(SUCCEEDED(manager->SetFocus(emptyDocument)), "deferred focus loss");
-  pump();
-  require(SUCCEEDED(manager->SetFocus(document)), "deferred focus restore");
-  const bool resumed = key('I');
-  if (!resumed) {
-    store->appInsert(L"i");
+    require(SUCCEEDED(manager->SetFocus(document)), "restore document");
     pump();
+    require(store->text.empty(), "focus retained preedit");
+    store->refuseComposition = true;
+    require(!key('K', true), "rejected composition consumed key");
+    require(store->text.empty(), "rejected composition changed document");
+    store->refuseComposition = false;
+    require(!key('K', false, true), "Win shortcut consumed");
+    require(store->text.empty(), "Win shortcut changed document");
+    for (auto scope : {IS_PASSWORD, IS_PRIVATE}) {
+      store->setScope(scope);
+      pump();
+      require(!key('K', true), "sensitive field consumed input");
+      require(store->text.empty(), "sensitive field changed document");
+    }
+    store->setScope(IS_DEFAULT, true);
+    pump();
+    require(!key('K', true), "unknown field scope consumed input");
+    require(store->text.empty(), "unknown field scope changed document");
+    store->setScope(IS_DEFAULT);
+    pump();
+
+    require(key('K', true) && key('A'), "start before forced termination");
+    terminate(true);
+    require(store->text.empty(), "forced termination retained preedit");
+    require(key('K', true) && key('A'), "start before external edit");
+    store->replace(L"外部");
+    pump();
+    terminate(false);
+    require(store->text == L"外部", "termination erased external edits");
+    store->replace(L"");
+    pump();
+
+    require(key('K', true) && key('O') && key('U') && key(VK_SPACE),
+            "candidate conversion");
+    require(store->text == L"▼候補01", "first inline candidate");
+    require(key(VK_NEXT), "inline Page_Down propagated");
+    require(store->text == L"▼候補05", "first candidate page");
+    require(key(VK_NEXT), "list Page_Down propagated");
+    require(store->text == L"▼候補12", "next candidate page");
+    require(key(VK_NEXT), "last-page Page_Down propagated");
+    require(store->text == L"▼候補12", "Page_Down passed last page");
+    require(key(VK_PRIOR), "list Page_Up propagated");
+    require(store->text == L"▼候補05", "previous candidate page");
+    require(key('X'), "candidate page previous");
+    require(store->text == L"▼候補04", "return to inline candidate");
+    require(key(VK_PRIOR), "inline Page_Up propagated");
+    require(store->text == L"▼候補04", "inline Page_Up changed candidate");
+    require(key(VK_DOWN) && key('3'), "numeric candidate selection");
+    require(store->text == L"候補07",
+            "numeric selection chose wrong candidate");
+    store->replace(L"");
+    pump();
+
+    store->denyLock = true;
+    require(!key('K', true), "unavailable edit lock consumed key");
+    require(store->text.empty(), "unavailable edit lock changed document");
+    store->denyLock = false;
+    require(key('A'), "start after unavailable edit lock");
+    require(store->text == L"あ", "unavailable edit lock advanced input state");
+    require(key('K', true) && key('A'), "start before caret movement");
+    store->move(0);
+    pump();
+    require(store->text == L"あ", "caret movement retained stale preedit");
+    require(key('I'), "input after caret movement");
+    require(store->text == L"いあ", "input used old caret position");
+    store->replace(L"");
+    pump();
+    require(key('K', true) && key('A'), "start before delayed cleanup");
+    store->holdAsync = true;
+    require(SUCCEEDED(manager->SetFocus(emptyDocument)), "deferred focus loss");
+    pump();
+    require(SUCCEEDED(manager->SetFocus(document)), "deferred focus restore");
+    const bool resumed = key('I');
+    if (!resumed) {
+      store->appInsert(L"i");
+      pump();
+    }
+    const auto afterInput = store->text;
+    require(afterInput == (resumed ? L"い" : L"▽かi"),
+            "pending cleanup lost or duplicated input");
+    store->grantAsync();
+    pump();
+    require(store->text == afterInput, "deferred cleanup erased later input");
+    store->replace(L"");
+    pump();
+    require(key('K', true), "start after refusal");
+    store->failSelection = true;
+    require(key('A'), "post-insertion failure forwarded key twice");
+    store->failSelection = false;
+    pump();
+    require(store->text == L"▽か",
+            "post-insertion failure lost or duplicated input");
+    store->replace(L"");
+    pump();
+    require(key('K', true) && key('A'),
+            "start before cleanup selection failure");
+    require(store->text == L"▽か",
+            "wrong preedit before cleanup selection failure");
+    const ULONG beforeCleanup = store->endedCompositions;
+    store->failSelectionAfterWrite = true;
+    require(SUCCEEDED(manager->SetFocus(emptyDocument)),
+            "cleanup selection failure focus");
+    pump();
+    require(!store->failSelectionAfterWrite && store->failSelection,
+            "cleanup did not reach the post-write selection fault");
+    require(store->endedCompositions == beforeCleanup + 1,
+            "selection failure prevented composition termination");
+    if (!store->text.empty()) {
+      std::fprintf(stderr,
+                   "cleanup: write_pending=%d selection_failure=%d text=",
+                   store->failSelectionAfterWrite, store->failSelection);
+      for (wchar_t ch : store->text)
+        std::fprintf(stderr, "%04x ", static_cast<unsigned>(ch));
+      std::fputc('\n', stderr);
+    }
+    store->failSelection = false;
+    require(store->text.empty(), "cleanup selection failure retained preedit");
+    require(SUCCEEDED(manager->SetFocus(document)),
+            "focus after cleanup selection failure");
+    require(key('I'), "input after cleanup selection failure");
+    require(store->text == L"い",
+            "cleanup selection failure retained input state");
   }
-  const auto afterInput = store->text;
-  require(afterInput == (resumed ? L"い" : L"▽かi"),
-          "pending cleanup lost or duplicated input");
-  store->grantAsync();
-  pump();
-  require(store->text == afterInput, "deferred cleanup erased later input");
-  store->replace(L"");
-  pump();
-  require(key('K', true), "start after refusal");
-  store->failSelection = true;
-  require(key('A'), "post-insertion failure forwarded key twice");
-  store->failSelection = false;
-  pump();
-  require(store->text == L"▽か",
-          "post-insertion failure lost or duplicated input");
-  store->replace(L"");
-  pump();
-  require(key('K', true) && key('A'), "start before cleanup selection failure");
-  require(store->text == L"▽か",
-          "wrong preedit before cleanup selection failure");
-  const ULONG beforeCleanup = store->endedCompositions;
-  store->failSelectionAfterWrite = true;
-  require(SUCCEEDED(manager->SetFocus(emptyDocument)),
-          "cleanup selection failure focus");
-  pump();
-  require(!store->failSelectionAfterWrite && store->failSelection,
-          "cleanup did not reach the post-write selection fault");
-  require(store->endedCompositions == beforeCleanup + 1,
-          "selection failure prevented composition termination");
-  if (!store->text.empty()) {
-    std::fprintf(stderr, "cleanup: write_pending=%d selection_failure=%d text=",
-                 store->failSelectionAfterWrite, store->failSelection);
-    for (wchar_t ch : store->text)
-      std::fprintf(stderr, "%04x ", static_cast<unsigned>(ch));
-    std::fputc('\n', stderr);
-  }
-  store->failSelection = false;
-  require(store->text.empty(), "cleanup selection failure retained preedit");
-  require(SUCCEEDED(manager->SetFocus(document)),
-          "focus after cleanup selection failure");
-  require(key('I'), "input after cleanup selection failure");
-  require(store->text == L"い",
-          "cleanup selection failure retained input state");
   ITfContextComposition *remaining = nullptr;
   require(
       SUCCEEDED(context->QueryInterface(IID_ITfContextComposition,
@@ -768,7 +775,8 @@ int run(int argc, char **argv) {
 int main(int argc, char **argv) {
   HMODULE dll = nullptr;
   try {
-    require(argc == 3, "Usage: test-tsf dll euc-jp-dictionary");
+    require(argc == 3 || argc == 4,
+            "Usage: test-tsf dll euc-jp-dictionary [--activation-only]");
     dll = LoadLibraryA(argv[1]);
     require(dll != nullptr, "retain test DLL");
     auto unload = reinterpret_cast<HRESULT(WINAPI *)()>(

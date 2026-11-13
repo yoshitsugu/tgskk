@@ -76,5 +76,7 @@ jobs:
           [System.Text.Encoding]::RegisterProvider([System.Text.CodePagesEncodingProvider]::Instance)
           $encoding = [System.Text.Encoding]::GetEncoding(51932)
           [System.IO.File]::WriteAllBytes("$pwd/build/windows/SKK-JISYO.L", $encoding.GetBytes($text))
+          & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/test-tsf-baseline.dll" "$pwd/build/windows/SKK-JISYO.L" --activation-only
+          Write-Host "Minimal text-service control exit code: $LASTEXITCODE"
           & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/tgskk-tip.dll" "$pwd/build/windows/SKK-JISYO.L"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
