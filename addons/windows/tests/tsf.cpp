@@ -581,7 +581,16 @@ int run(int argc, char **argv) {
     compositions->Release();
     pump();
   };
-  const int through = argc == 3 ? 8 : std::atoi(argv[3]);
+  const std::string variant = argc == 4 ? argv[3] : "";
+  const int through = argc == 3 || variant == "--skip-refusal" ? 8
+                      : variant == "--only-refusal" ? 0
+                                                    : std::atoi(argv[3]);
+  if (variant == "--only-refusal") {
+    store->refuseComposition = true;
+    require(!key('K', true), "rejected composition consumed key");
+    require(store->text.empty(), "rejected composition changed document");
+    store->refuseComposition = false;
+  }
   if (through >= 1) {
     require(key('K', true), "uppercase kana rejected");
     require(key('A'), "kana continuation");
@@ -594,10 +603,12 @@ int run(int argc, char **argv) {
     require(store->text.empty(), "focus retained preedit");
   }
   if (through >= 2) {
-    store->refuseComposition = true;
-    require(!key('K', true), "rejected composition consumed key");
-    require(store->text.empty(), "rejected composition changed document");
-    store->refuseComposition = false;
+    if (variant != "--skip-refusal") {
+      store->refuseComposition = true;
+      require(!key('K', true), "rejected composition consumed key");
+      require(store->text.empty(), "rejected composition changed document");
+      store->refuseComposition = false;
+    }
     require(!key('K', false, true), "Win shortcut consumed");
     require(store->text.empty(), "Win shortcut changed document");
     for (auto scope : {IS_PASSWORD, IS_PRIVATE}) {

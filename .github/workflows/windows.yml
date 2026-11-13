@@ -78,7 +78,7 @@ jobs:
           [System.IO.File]::WriteAllBytes("$pwd/build/windows/SKK-JISYO.L", $encoding.GetBytes($text))
           & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/test-tsf-baseline.dll" "$pwd/build/windows/SKK-JISYO.L" --activation-only
           Write-Host "Minimal text-service control exit code: $LASTEXITCODE"
-          foreach ($through in 0..7) {
+          foreach ($through in @('--only-refusal', '--skip-refusal')) {
             Write-Host "Production lifecycle through checkpoint $through"
             & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/tgskk-tip.dll" "$pwd/build/windows/SKK-JISYO.L" $through
             Write-Host "Checkpoint $through exit code: $LASTEXITCODE"
