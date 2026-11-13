@@ -581,7 +581,8 @@ int run(int argc, char **argv) {
     compositions->Release();
     pump();
   };
-  if (argc == 3) {
+  const int through = argc == 3 ? 8 : std::atoi(argv[3]);
+  if (through >= 1) {
     require(key('K', true), "uppercase kana rejected");
     require(key('A'), "kana continuation");
     require(store->text == L"▽か", "wrong preedit");
@@ -591,6 +592,8 @@ int run(int argc, char **argv) {
     require(SUCCEEDED(manager->SetFocus(document)), "restore document");
     pump();
     require(store->text.empty(), "focus retained preedit");
+  }
+  if (through >= 2) {
     store->refuseComposition = true;
     require(!key('K', true), "rejected composition consumed key");
     require(store->text.empty(), "rejected composition changed document");
@@ -609,7 +612,8 @@ int run(int argc, char **argv) {
     require(store->text.empty(), "unknown field scope changed document");
     store->setScope(IS_DEFAULT);
     pump();
-
+  }
+  if (through >= 3) {
     require(key('K', true) && key('A'), "start before forced termination");
     terminate(true);
     require(store->text.empty(), "forced termination retained preedit");
@@ -620,7 +624,8 @@ int run(int argc, char **argv) {
     require(store->text == L"外部", "termination erased external edits");
     store->replace(L"");
     pump();
-
+  }
+  if (through >= 4) {
     require(key('K', true) && key('O') && key('U') && key(VK_SPACE),
             "candidate conversion");
     require(store->text == L"▼候補01", "first inline candidate");
@@ -641,7 +646,8 @@ int run(int argc, char **argv) {
             "numeric selection chose wrong candidate");
     store->replace(L"");
     pump();
-
+  }
+  if (through >= 5) {
     store->denyLock = true;
     require(!key('K', true), "unavailable edit lock consumed key");
     require(store->text.empty(), "unavailable edit lock changed document");
@@ -656,6 +662,8 @@ int run(int argc, char **argv) {
     require(store->text == L"いあ", "input used old caret position");
     store->replace(L"");
     pump();
+  }
+  if (through >= 6) {
     require(key('K', true) && key('A'), "start before delayed cleanup");
     store->holdAsync = true;
     require(SUCCEEDED(manager->SetFocus(emptyDocument)), "deferred focus loss");
@@ -674,6 +682,8 @@ int run(int argc, char **argv) {
     require(store->text == afterInput, "deferred cleanup erased later input");
     store->replace(L"");
     pump();
+  }
+  if (through >= 7) {
     require(key('K', true), "start after refusal");
     store->failSelection = true;
     require(key('A'), "post-insertion failure forwarded key twice");
@@ -683,6 +693,8 @@ int run(int argc, char **argv) {
             "post-insertion failure lost or duplicated input");
     store->replace(L"");
     pump();
+  }
+  if (through >= 8) {
     require(key('K', true) && key('A'),
             "start before cleanup selection failure");
     require(store->text == L"▽か",
@@ -712,6 +724,8 @@ int run(int argc, char **argv) {
     require(store->text == L"い",
             "cleanup selection failure retained input state");
   }
+  require(SUCCEEDED(manager->SetFocus(emptyDocument)), "final focus loss");
+  pump();
   ITfContextComposition *remaining = nullptr;
   require(
       SUCCEEDED(context->QueryInterface(IID_ITfContextComposition,
@@ -730,8 +744,6 @@ int run(int argc, char **argv) {
   remaining->Release();
   require(found == 0, "composition remained after final commit");
   keys->Release();
-  require(SUCCEEDED(manager->SetFocus(emptyDocument)), "final focus loss");
-  pump();
   ITfInputProcessorProfileMgr *profileManager = nullptr;
   require(SUCCEEDED(profiles->QueryInterface(
               IID_ITfInputProcessorProfileMgr,
