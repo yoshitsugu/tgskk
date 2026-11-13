@@ -411,6 +411,65 @@ struct RegistrationGuard {
                  stderr);
   }
 };
+class RefusalProbe final : public ITfEditSession, public ITfCompositionSink {
+  ULONG refs = 1;
+  ITfContext *context;
+  bool withSink;
+
+public:
+  bool called = false, accepted = false;
+  HRESULT result = E_UNEXPECTED;
+  RefusalProbe(ITfContext *value, bool sink) : context(value), withSink(sink) {}
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
+    if (!out)
+      return E_POINTER;
+    *out = nullptr;
+    if (id == IID_IUnknown || id == IID_ITfEditSession)
+      *out = static_cast<ITfEditSession *>(this);
+    else if (id == IID_ITfCompositionSink)
+      *out = static_cast<ITfCompositionSink *>(this);
+    if (!*out)
+      return E_NOINTERFACE;
+    AddRef();
+    return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+  ULONG STDMETHODCALLTYPE Release() override {
+    const auto count = --refs;
+    if (!count)
+      delete this;
+    return count;
+  }
+  HRESULT STDMETHODCALLTYPE DoEditSession(TfEditCookie cookie) override {
+    called = true;
+    TF_SELECTION selection{};
+    ULONG fetched = 0;
+    result = context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection,
+                                   &fetched);
+    ITfContextComposition *owner = nullptr;
+    ITfComposition *composition = nullptr;
+    if (SUCCEEDED(result))
+      result = context->QueryInterface(IID_ITfContextComposition,
+                                       reinterpret_cast<void **>(&owner));
+    if (SUCCEEDED(result) && fetched == 1 && selection.range)
+      result = owner->StartComposition(cookie, selection.range,
+                                       withSink ? this : nullptr, &composition);
+    accepted = composition != nullptr;
+    if (composition) {
+      composition->EndComposition(cookie);
+      composition->Release();
+    }
+    if (owner)
+      owner->Release();
+    if (selection.range)
+      selection.range->Release();
+    return result;
+  }
+  HRESULT STDMETHODCALLTYPE OnCompositionTerminated(TfEditCookie,
+                                                    ITfComposition *) override {
+    return S_OK;
+  }
+};
 int run(int argc, char **argv) {
   require(argc == 3 || argc == 4,
           "Usage: test-tsf dll euc-jp-dictionary [--activation-only]");
@@ -585,6 +644,21 @@ int run(int argc, char **argv) {
   const int through = argc == 3 || variant == "--skip-refusal" ? 8
                       : variant == "--only-refusal" ? 0
                                                     : std::atoi(argv[3]);
+  if (variant == "--control-refusal" ||
+      variant == "--control-refusal-no-sink") {
+    store->refuseComposition = true;
+    auto *probe = new RefusalProbe(context, variant == "--control-refusal");
+    HRESULT status = E_FAIL;
+    require(SUCCEEDED(context->RequestEditSession(
+                id, probe, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &status)),
+            "standalone refusal request");
+    pump();
+    require(probe->called && probe->result == S_OK && !probe->accepted,
+            "standalone refusal result");
+    std::fprintf(stderr, "standalone rejected sink retained references=%lu\n",
+                 probe->Release());
+    store->refuseComposition = false;
+  }
   if (variant == "--only-refusal") {
     store->refuseComposition = true;
     require(!key('K', true), "rejected composition consumed key");
