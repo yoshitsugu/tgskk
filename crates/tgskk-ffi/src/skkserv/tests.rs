@@ -3,6 +3,7 @@ use crate::{tgskk_session_key, tgskk_session_reset, tgskk_session_set_zenz, tgsk
 use std::ffi::{CStr, CString};
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::process::Command;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -322,8 +323,9 @@ fn google_ffi_uses_managed_utf8_helper_and_confirms_okuri_once() {
     let executable = directory.path().join("helper.py");
     let request_log = directory.path().join("request");
     // The worker subprocess runs in this private directory; no external API.
+    let source = executable.with_extension("source");
     std::fs::write(
-        &executable,
+        &source,
         r#"#!/usr/bin/env python3
 import os, sys
 assert sys.argv[1:] == ['--stdio', '--encoding=utf-8']
@@ -343,6 +345,15 @@ sys.stdin.buffer.read()
 "#,
     )
     .unwrap();
+    // Keep the executable's writer out of other tests' forked processes.
+    assert!(
+        Command::new("cp")
+            .arg(&source)
+            .arg(&executable)
+            .status()
+            .unwrap()
+            .success()
+    );
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     let executable = CString::new(executable.to_str().unwrap()).unwrap();
     let mut error = ptr::null_mut();

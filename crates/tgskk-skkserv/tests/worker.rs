@@ -267,7 +267,15 @@ fn duplicate_readings_share_one_request() {
         let worker = worker.clone();
         let result_tx = result_tx.clone();
         handles.push(thread::spawn(move || {
-            let result = worker.lookup("にほん", Duration::from_secs(1));
+            let deadline = Instant::now() + Duration::from_secs(1);
+            let result = loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                match worker.lookup("にほん", remaining) {
+                    // Queue contention is allowed by the nonblocking lookup API.
+                    Err(LookupError::Busy) if !remaining.is_zero() => thread::yield_now(),
+                    result => break result,
+                }
+            };
             let _ = result_tx.send(result);
         }));
     }

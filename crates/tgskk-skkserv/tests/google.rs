@@ -95,7 +95,18 @@ while True:
     respond()
 "#
     );
-    fs::write(&path, script).expect("write helper script");
+    // A concurrent fork can inherit a writer to this inode and cause ETXTBSY.
+    // Only the copy subprocess opens the executable for writing.
+    let source = path.with_extension("source");
+    fs::write(&source, script).expect("write helper source");
+    assert!(
+        Command::new("cp")
+            .arg(&source)
+            .arg(&path)
+            .status()
+            .expect("copy helper")
+            .success()
+    );
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod helper");
     path
 }
@@ -234,23 +245,27 @@ fn google_standalone_zero_resets_and_next_lookup_respawns() {
     let script = write_script(dir.path(), "helper.py", &log, ZERO);
     let worker = worker_for(&script);
 
-    for _ in 0..2 {
+    for attempt in 0..2 {
         match worker.lookup("ひみつ", Duration::from_secs(1)) {
             Err(LookupError::Unavailable) => {}
             other => panic!("unexpected result: {other:?}"),
         }
+        let error = worker.take_error().expect("diagnostic");
+        assert!(
+            error.contains("reported an error"),
+            "attempt {attempt}: {error}, log={:?}",
+            log_lines(&log)
+        );
+        assert!(!error.contains("ひみつ"));
     }
 
     wait_for(
         || start_pids(&log).len() == 2,
         Duration::from_secs(2),
-        "two helper starts",
+        &format!("two helper starts; log={:?}", log_lines(&log)),
     );
     let pids = start_pids(&log);
     assert_ne!(pids[0], pids[1], "helper was not restarted after 0");
-    let error = worker.take_error().expect("diagnostic");
-    assert!(error.contains("reported an error"), "{error}");
-    assert!(!error.contains("ひみつ"));
 }
 
 #[test]
@@ -275,7 +290,7 @@ fn google_malformed_response_reports_protocol_error_and_resets() {
     wait_for(
         || start_pids(&log).len() == 2,
         Duration::from_secs(2),
-        "two helper starts",
+        &format!("two helper starts; log={:?}", log_lines(&log)),
     );
     let pids = start_pids(&log);
     assert_ne!(pids[0], pids[1]);
@@ -303,7 +318,7 @@ fn google_crash_eof_starts_fresh_helper() {
     wait_for(
         || start_pids(&log).len() == 2,
         Duration::from_secs(2),
-        "two helper starts",
+        &format!("two helper starts; log={:?}", log_lines(&log)),
     );
     let pids = start_pids(&log);
     assert_ne!(pids[0], pids[1]);
@@ -399,7 +414,7 @@ fn google_persistent_stream_rejects_trailing_bytes() {
     wait_for(
         || start_pids(&log).len() == 2,
         Duration::from_secs(2),
-        "two helper starts",
+        &format!("two helper starts; log={:?}", log_lines(&log)),
     );
 }
 
