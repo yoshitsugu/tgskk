@@ -233,6 +233,48 @@ class Service final : public ITfTextInputProcessorEx,
     if (candidates)
       ShowWindow(candidates, SW_HIDE);
   }
+  const TgskkView *keyView(uint32_t symbol, uint32_t modifiers) {
+    const auto *view = tgskk_session_view(session);
+    if (!view || !view->selecting || !view->candidate_count || modifiers)
+      return tgskk_session_key(session, symbol, modifiers, 0);
+    const size_t count = view->candidate_count;
+    const size_t selected = view->selected;
+    const bool list = selected >= inlineCandidates;
+    const size_t page = list ? (selected - inlineCandidates) / pageSize : 0;
+    if (symbol == 0xff55 || symbol == 0xff56 ||
+        (list && (symbol == ' ' || symbol == 'x'))) {
+      size_t target = selected;
+      if (!list && symbol == 0xff56) {
+        target = std::min(inlineCandidates, count - 1);
+      } else if (list && (symbol == ' ' || symbol == 0xff56)) {
+        target = inlineCandidates + (page + 1) * pageSize;
+        if (target >= count) {
+          if (symbol == ' ') {
+            if (!tgskk_session_choose(session, count - 1))
+              return nullptr;
+            return tgskk_session_key(session, ' ', 0, 0);
+          }
+          target = selected;
+        }
+      } else if (list) {
+        target = page ? inlineCandidates + (page - 1) * pageSize
+                      : inlineCandidates - 1;
+      }
+      return tgskk_session_choose(session, target);
+    }
+    if (symbol == 0xff52 || symbol == 0xff54)
+      return tgskk_session_choose(
+          session, symbol == 0xff54 ? std::min(selected + 1, count - 1)
+                                    : (selected ? selected - 1 : 0));
+    if (list && symbol >= '1' && symbol < '1' + pageSize) {
+      const size_t index = inlineCandidates + page * pageSize + symbol - '1';
+      return index < count ? tgskk_session_select(session, index)
+                           : tgskk_session_choose(session, selected);
+    }
+    return tgskk_session_key(session, symbol, modifiers, 0);
+  }
+  static constexpr size_t inlineCandidates = 4;
+  static constexpr size_t pageSize = 7;
   bool disabled(ITfContext *context) {
     ITfCompartmentMgr *compartments = nullptr;
     bool result = false;
@@ -370,6 +412,8 @@ public:
   }
   HRESULT STDMETHODCALLTYPE ActivateEx(ITfThreadMgr *value, TfClientId id,
                                        DWORD flags) override {
+    if (!value || id == TF_CLIENTID_NULL)
+      return E_INVALIDARG;
     if (manager)
       return E_UNEXPECTED;
     if (flags & (TF_TMAE_SECUREMODE | TF_TMAE_UIELEMENTENABLEDONLY))
@@ -723,8 +767,7 @@ public:
       lifetimes[composition] = std::make_shared<bool>(true);
     }
     const TgskkView *view =
-        reset ? tgskk_session_reset(session)
-              : tgskk_session_key(session, symbol, modifiers, 0);
+        reset ? tgskk_session_reset(session) : keyView(symbol, modifiers);
     if (!view) {
       editing = false;
       release(range);
@@ -779,12 +822,21 @@ public:
       }
       hideCandidates();
       if (SUCCEEDED(result) && candidates && view->selecting &&
-          view->selected >= 4) {
+          view->selected >= inlineCandidates) {
         std::wstring text;
-        size_t start = 4 + ((view->selected - 4) / 7) * 7;
-        for (size_t i = start; i < view->candidate_count && i < start + 7; ++i)
+        const size_t start =
+            inlineCandidates +
+            ((view->selected - inlineCandidates) / pageSize) * pageSize;
+        for (size_t i = start;
+             i < view->candidate_count && i < start + pageSize; ++i) {
           text += (i == view->selected ? L"> " : L"  ") +
-                  wide(tgskk_candidate_text(session, i)) + L"\r\n";
+                  std::to_wstring(i - start + 1) + L" " +
+                  wide(tgskk_candidate_text(session, i));
+          const char *annotation = tgskk_candidate_annotation(session, i);
+          if (annotation && *annotation)
+            text += L" " + wide(annotation);
+          text += L"\r\n";
+        }
         ITfContextView *viewport = nullptr;
         if (SUCCEEDED(context->GetActiveView(&viewport))) {
           RECT caret{};
@@ -945,6 +997,9 @@ extern "C" HRESULT __stdcall DllCanUnloadNow() {
 }
 extern "C" HRESULT __stdcall DllGetClassObject(REFCLSID id, REFIID iid,
                                                void **out) {
+  if (!out)
+    return E_POINTER;
+  *out = nullptr;
   if (id != serviceId)
     return CLASS_E_CLASSNOTAVAILABLE;
   auto *factory = new (std::nothrow) Factory;

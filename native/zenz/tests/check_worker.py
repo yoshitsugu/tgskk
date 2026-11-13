@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the real static worker, framing, and dynamic-backend isolation."""
+import contextlib
 import math
 import os
 from pathlib import Path
@@ -16,14 +17,15 @@ import unittest
 
 WORKER, MODEL = (Path(arg).resolve() for arg in sys.argv[1:3])
 PROBE = Path(sys.argv[3]).resolve() if len(sys.argv) > 3 else None
+REFERENCE = os.environ.get('TGSKK_SERIAL_REFERENCE')
 sys.argv = sys.argv[:1]
 MAGIC = 0x325A4754
 REFUSED = 0xFFFFFFFF
 
 
 class Worker:
-    def __init__(self, cwd=None, env=None, model=MODEL):
-        self.process = subprocess.Popen([str(WORKER), str(model)], cwd=cwd, env=env,
+    def __init__(self, cwd=None, env=None, model=MODEL, executable=WORKER):
+        self.process = subprocess.Popen([str(executable), str(model)], cwd=cwd, env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.reader = None
         if os.name == 'nt':
@@ -141,6 +143,11 @@ class NativeWorkerTests(unittest.TestCase):
             with self.subTest(context=context, reading=reading), Worker() as worker:
                 actual = worker.score(context, reading, candidates)
                 self.assertIsNotNone(actual)
+                if REFERENCE:
+                    with Worker(executable=REFERENCE) as serial:
+                        expected = serial.score(context, reading, candidates)
+                    self.assertEqual(actual, expected)
+                    continue
                 for got, reference in zip(actual, expected, strict=True):
                     # Serial references use the pinned model; allow libm/compiler rounding.
                     self.assertAlmostEqual(got, reference, delta=1e-6)
@@ -193,11 +200,14 @@ class NativeWorkerTests(unittest.TestCase):
         ]
         contexts = ['', '駅で', '新聞を読んでいるときの文章です',
                     ('ここでは直前までの文章を文脈として候補の採点に使います。' * 2)[-40:]]
-        with Worker() as worker:
+        reference = Worker(executable=REFERENCE) if REFERENCE else contextlib.nullcontext()
+        with Worker() as worker, reference as serial:
             for context in contexts:
                 for reading, candidates in cases:
                     with self.subTest(context=context, reading=reading, candidates=candidates):
                         together = worker.score(context, reading, candidates)
+                        if REFERENCE:
+                            self.assertEqual(together, serial.score(context, reading, candidates))
                         single = [worker.score(context, reading, [candidate])[0]
                                   for candidate in candidates]
                         self.assertEqual(together, single)

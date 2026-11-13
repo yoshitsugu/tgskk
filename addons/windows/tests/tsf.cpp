@@ -258,6 +258,16 @@ public:
     if (sink)
       sink->OnSelectionChange();
   }
+  void replace(const std::wstring &value) {
+    TS_TEXTCHANGE change{0, static_cast<LONG>(text.size()),
+                         static_cast<LONG>(value.size())};
+    text = value;
+    start = end = static_cast<LONG>(text.size());
+    if (sink) {
+      sink->OnTextChange(0, &change);
+      sink->OnSelectionChange();
+    }
+  }
 };
 void pump() {
   MSG msg;
@@ -304,6 +314,7 @@ int main(int argc, char **argv) {
   service = nullptr;
   require(registration && unregistration && SUCCEEDED(registration()),
           "TSF registration");
+  require(registration() == S_OK, "repeated TSF registration");
   ITfThreadMgr *manager = nullptr;
   require(SUCCEEDED(CoCreateInstance(CLSID_TF_ThreadMgr, nullptr,
                                      CLSCTX_INPROC_SERVER, IID_ITfThreadMgr,
@@ -328,6 +339,12 @@ int main(int argc, char **argv) {
           "context");
   require(SUCCEEDED(document->Push(context)), "push context");
   require(SUCCEEDED(manager->SetFocus(document)), "focus document");
+  ITfDocumentMgr *previous = nullptr;
+  require(
+      SUCCEEDED(manager->AssociateFocus(store->window, document, &previous)),
+      "associate window focus");
+  if (previous)
+    previous->Release();
   GUID profileId = {0x70c846ab,
                     0x9fb5,
                     0x43cb,
@@ -363,6 +380,7 @@ int main(int argc, char **argv) {
                                                       profileId)),
           "profile activation");
   pump();
+  require(SUCCEEDED(manager->SetFocus(document)), "focus activated document");
   ITfKeystrokeMgr *keys = nullptr;
   require(SUCCEEDED(manager->QueryInterface(IID_ITfKeystrokeMgr,
                                             reinterpret_cast<void **>(&keys))),
@@ -373,11 +391,26 @@ int main(int argc, char **argv) {
       state[VK_SHIFT] = state[VK_LSHIFT] = 0x80;
     if (win)
       state[VK_LWIN] = 0x80;
-    SetKeyboardState(state);
+    require(SetKeyboardState(state), "keyboard state");
     BOOL test = FALSE, eaten = FALSE;
-    keys->TestKeyDown(code, 0, &test);
+    const LPARAM scan = 1 | (MapVirtualKeyW(code, MAPVK_VK_TO_VSC) << 16);
+    require(SUCCEEDED(keys->TestKeyDown(code, scan, &test)), "key eligibility");
     if (test)
-      require(SUCCEEDED(keys->KeyDown(code, 0, &eaten)), "key callback");
+      require(SUCCEEDED(keys->KeyDown(code, scan, &eaten)), "key callback");
+    if (!eaten) {
+      CLSID foreground{};
+      HRESULT foregroundResult = keys->GetForeground(&foreground);
+      LANGID activeLanguage = 0;
+      GUID activeProfile{};
+      HRESULT activeResult = profiles->GetActiveLanguageProfile(
+          serviceId, &activeLanguage, &activeProfile);
+      std::fprintf(stderr,
+                   "key=%u eligible=%d foreground=%08lx ours=%d "
+                   "profile=%08lx lang=%04x ours=%d focus=%p/%p\\n",
+                   code, test, foregroundResult, foreground == serviceId,
+                   activeResult, activeLanguage, activeProfile == profileId,
+                   GetFocus(), store->window);
+    }
     pump();
     return eaten;
   };
@@ -396,6 +429,41 @@ int main(int argc, char **argv) {
   store->refuseComposition = false;
   require(!key('K', false, true), "Win shortcut consumed");
   require(store->text.empty(), "Win shortcut changed document");
+
+  require(key('K', true) && key('O') && key('U') && key(VK_SPACE),
+          "candidate conversion");
+  require(store->text == L"▼候補01", "first inline candidate");
+  require(key(VK_NEXT), "inline Page_Down propagated");
+  require(store->text == L"▼候補05", "first candidate page");
+  require(key(VK_NEXT), "list Page_Down propagated");
+  require(store->text == L"▼候補12", "next candidate page");
+  require(key(VK_NEXT), "last-page Page_Down propagated");
+  require(store->text == L"▼候補12", "Page_Down passed last page");
+  require(key(VK_PRIOR), "list Page_Up propagated");
+  require(store->text == L"▼候補05", "previous candidate page");
+  require(key('X'), "candidate page previous");
+  require(store->text == L"▼候補04", "return to inline candidate");
+  require(key(VK_PRIOR), "inline Page_Up propagated");
+  require(store->text == L"▼候補04", "inline Page_Up changed candidate");
+  require(key(VK_DOWN) && key('3'), "numeric candidate selection");
+  require(store->text == L"候補07", "numeric selection chose wrong candidate");
+  store->replace(L"");
+  pump();
+
+  store->denyLock = true;
+  require(!key('K', true), "unavailable edit lock consumed key");
+  require(store->text.empty(), "unavailable edit lock changed document");
+  store->denyLock = false;
+  require(key('A'), "start after unavailable edit lock");
+  require(store->text == L"あ", "unavailable edit lock advanced input state");
+  require(key('K', true) && key('A'), "start before caret movement");
+  store->move(0);
+  pump();
+  require(store->text == L"あ", "caret movement retained stale preedit");
+  require(key('I'), "input after caret movement");
+  require(store->text == L"いあ", "input used old caret position");
+  store->replace(L"");
+  pump();
   require(key('K', true), "start after refusal");
   store->failSelection = true;
   require(key('A'), "post-insertion failure forwarded key twice");
@@ -416,6 +484,7 @@ int main(int argc, char **argv) {
   store->Release();
   pump();
   require(SUCCEEDED(unregistration()), "TSF unregistration");
+  require(unregistration() == S_OK, "repeated TSF unregistration");
   pump();
   CoUninitialize();
   require(unload() == S_OK, "COM objects leaked");

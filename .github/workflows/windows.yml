@@ -26,7 +26,9 @@ jobs:
           cmake -S native/zenz -B build/zenz-windows -A x64 -DTGSKK_LLAMA_SOURCE="$pwd/build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478"
           cmake --build build/zenz-windows --config Release --parallel 2
       - name: Test real Windows AI scoring and Unicode paths
-        run: python native/zenz/tests/check_worker.py build/zenz-windows/Release/tgskk-zenz-worker.exe build/models/zenz-v3.2-small-Q5_K_M.gguf
+        run: |
+          $env:TGSKK_SERIAL_REFERENCE = "$pwd/build/zenz-windows/Release/test-zenz-serial-reference.exe"
+          python native/zenz/tests/check_worker.py build/zenz-windows/Release/tgskk-zenz-worker.exe build/models/zenz-v3.2-small-Q5_K_M.gguf
   desktop:
     runs-on: windows-2025
     timeout-minutes: 30
@@ -58,6 +60,7 @@ jobs:
         shell: pwsh
         run: |
           $text = [System.IO.File]::ReadAllText("$pwd/examples/SKK-JISYO.demo.utf8")
+          $text += "`nこう /" + ((1..14 | ForEach-Object { '候補{0:D2}' -f $_ }) -join '/') + "/`n"
           [System.Text.Encoding]::RegisterProvider([System.Text.CodePagesEncodingProvider]::Instance)
           $encoding = [System.Text.Encoding]::GetEncoding(51932)
           [System.IO.File]::WriteAllBytes("$pwd/build/windows/SKK-JISYO.L", $encoding.GetBytes($text))
