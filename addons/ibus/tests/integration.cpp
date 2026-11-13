@@ -220,6 +220,8 @@ int main() {
   g_assert_true(preedit() == "▼一");
   g_assert_true(key(one, IBUS_KEY_Page_Up));
   g_assert_true(preedit() == "▼一");
+  klass->page_up(one);
+  g_assert_true(preedit() == "▼一");
   sequence(one, "    ");
   g_assert_true(preedit() == "▼五");
   flush();
