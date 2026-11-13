@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../common/candidates.h"
+#include "broker_client.h"
 #include "tgskk.h"
 #include "tsf_compat.h"
 #include <algorithm>
@@ -291,8 +292,8 @@ class Service final : public ITfTextInputProcessorEx,
     clearCore();
     return true;
   }
-  TgskkRuntime *runtime = nullptr;
-  TgskkSession *session = nullptr;
+  std::unique_ptr<tgskk::windows::Input> session;
+  uint64_t inputEpoch = 0;
   HWND candidates = nullptr;
   HRESULT finish(TfEditCookie cookie) {
     if (!composition)
@@ -313,8 +314,7 @@ class Service final : public ITfTextInputProcessorEx,
     return result;
   }
   bool eligible(uint32_t symbol, uint32_t modifiers) const {
-    return composition || (session && tgskk_session_may_process(session, symbol,
-                                                                modifiers) > 0);
+    return composition || (session && session->mayProcess(symbol, modifiers));
   }
   static bool modifier(WPARAM key) {
     return key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU ||
@@ -325,7 +325,7 @@ class Service final : public ITfTextInputProcessorEx,
   bool editing = false;
   void clearCore() {
     if (session)
-      tgskk_session_reset(session);
+      session->reset();
     hideCandidates();
   }
   void hideCandidates() {
@@ -333,9 +333,9 @@ class Service final : public ITfTextInputProcessorEx,
       ShowWindow(candidates, SW_HIDE);
   }
   const TgskkView *keyView(uint32_t symbol, uint32_t modifiers) {
-    const auto *view = tgskk_session_view(session);
+    const auto *view = session->view();
     if (!view || !view->selecting || !view->candidate_count || modifiers)
-      return tgskk_session_key(session, symbol, modifiers, 0);
+      return session->key(symbol, modifiers);
     const size_t count = view->candidate_count;
     const size_t selected = view->selected;
     const bool list = selected >= inlineCandidates;
@@ -344,24 +344,22 @@ class Service final : public ITfTextInputProcessorEx,
       const auto move = tgskk::candidatePageMove(
           count, selected, inlineCandidates,
           symbol == ' ' || symbol == TGSKK_KEY_PAGE_DOWN, symbol == ' ');
-      const auto *next = tgskk_session_choose(session, move.index);
+      const auto *next = session->choose(move.index);
       if (next && move.kind == tgskk::CandidateMoveKind::Register)
-        return tgskk_session_key(session, ' ', 0, 0);
+        return session->key(' ', 0);
       if (next && move.kind == tgskk::CandidateMoveKind::ReturnToReading)
-        return tgskk_session_key(session, 'x', 0, 0);
+        return session->key('x', 0);
       return next;
     }
     if (symbol == TGSKK_KEY_UP || symbol == TGSKK_KEY_DOWN)
-      return tgskk_session_choose(
-          session,
+      return session->choose(
           tgskk::candidateStep(count, selected, symbol == TGSKK_KEY_DOWN));
     if (list && symbol >= '1' && symbol < '1' + pageSize) {
       const size_t index =
           tgskk::candidatePageStart(selected, inlineCandidates) + symbol - '1';
-      return index < count ? tgskk_session_select(session, index)
-                           : tgskk_session_choose(session, selected);
+      return index < count ? session->select(index) : session->choose(selected);
     }
-    return tgskk_session_key(session, symbol, modifiers, 0);
+    return session->key(symbol, modifiers);
   }
   static constexpr size_t inlineCandidates = tgskk::defaultInlineCandidates;
   static constexpr size_t pageSize = tgskk::candidatePageSize;
@@ -514,35 +512,14 @@ public:
     if (flags & (TF_TMAE_SECUREMODE | TF_TMAE_UIELEMENTENABLEDONLY))
       return E_ACCESSDENIED;
     try {
-      auto moduleFile = modulePath();
-      if (moduleFile.empty())
-        return E_FAIL;
-      std::wstring path =
-          (std::filesystem::path(moduleFile).parent_path() / L"SKK-JISYO.L")
-              .wstring();
-      wchar_t configured[32768];
-      DWORD n = GetEnvironmentVariableW(L"TGSKK_DICTIONARY", configured, 32768);
-      if (n >= 32768)
-        return E_INVALIDARG;
-      if (n)
-        path.assign(configured, n);
-      char *error = nullptr;
-      runtime =
-          tgskk_runtime_new(utf8(path).c_str(), "euc-jp", nullptr, &error);
-      if (!runtime)
-        reportCoreFailure("create runtime", error);
-      tgskk_string_free(error);
-      if (!runtime)
-        return E_FAIL;
-      session = tgskk_session_new(runtime, &error);
-      if (!session)
-        reportCoreFailure("create session", error);
-      tgskk_string_free(error);
-      if (!session) {
-        tgskk_runtime_free(runtime);
-        runtime = nullptr;
-        return E_FAIL;
-      }
+      const auto broker = (std::filesystem::path(modulePath()).parent_path() /
+                           L"tgskk-broker.exe")
+                              .wstring();
+      const auto config =
+          tgskk::windows::Config::load(tgskk::windows::homeDirectory(), broker);
+      session =
+          std::make_unique<tgskk::windows::Input>(config, module, &objects);
+      ++inputEpoch;
       manager = value;
       manager->AddRef();
       client = id;
@@ -584,6 +561,10 @@ public:
         return FAILED(error) ? error : E_FAIL;
       }
       return S_OK;
+    } catch (const std::exception &error) {
+      reportCoreFailure("activate input", error.what());
+      Deactivate();
+      return E_FAIL;
     } catch (...) {
       Deactivate();
       return E_OUTOFMEMORY;
@@ -630,12 +611,8 @@ public:
     if (candidates)
       DestroyWindow(candidates);
     candidates = nullptr;
-    if (session)
-      tgskk_session_free(session);
-    session = nullptr;
-    if (runtime)
-      tgskk_runtime_free(runtime);
-    runtime = nullptr;
+    session.reset();
+    ++inputEpoch;
     traceCount("deactivate completed", refs.load(), "references");
     return S_OK;
   }
@@ -701,8 +678,9 @@ public:
         return S_OK;
       }
     }
+    const auto requestEpoch = inputEpoch;
     HRESULT result = request(context, symbol, modifiers, eaten);
-    if (FAILED(result))
+    if (FAILED(result) && inputEpoch == requestEpoch && active == context)
       abandon(true);
     return S_OK;
   }
@@ -827,6 +805,16 @@ public:
     eaten = false;
     if (!session || (active && context != active))
       return TF_E_DISCONNECTED;
+    const auto epoch = inputEpoch;
+    ITfComposition *expectedComposition = composition;
+    std::shared_ptr<CompositionLife> expectedLife;
+    const auto sameActivation = [&] {
+      return session && inputEpoch == epoch && active == context;
+    };
+    const auto currentInput = [&] {
+      return sameActivation() && composition == expectedComposition &&
+             (!expectedLife || expectedLife->live);
+    };
     if (cancelPending && composition) {
       auto found = lifetimes.find(composition);
       if (found == lifetimes.end())
@@ -843,6 +831,11 @@ public:
       cancelPending = false;
       clearCore();
     }
+    expectedComposition = composition;
+    if (auto found = lifetimes.find(composition); found != lifetimes.end())
+      expectedLife = found->second;
+    if (!currentInput())
+      return TF_E_DISCONNECTED;
     ITfRange *range = nullptr;
     bool fresh = !composition;
     if (composition) {
@@ -859,6 +852,12 @@ public:
         return reportFailure("selection", FAILED(hr) ? hr : E_FAIL);
       range = selection.range;
     }
+    if (!currentInput()) {
+      release(range);
+      return TF_E_DISCONNECTED;
+    }
+    session->context("", false, false);
+    bool knownScope = false;
     if (!reset) {
       ITfReadOnlyProperty *property = nullptr;
       HRESULT scopeResult =
@@ -881,6 +880,7 @@ public:
             InputScope *scopes = nullptr;
             UINT count = 0;
             scopeResult = scope->GetInputScopes(&scopes, &count);
+            knownScope = SUCCEEDED(scopeResult) && count > 0;
             if (SUCCEEDED(scopeResult))
               for (UINT i = 0; i < count; ++i)
                 if (scopes[i] == IS_PASSWORD || scopes[i] == IS_PRIVATE)
@@ -899,6 +899,47 @@ public:
         }
       }
     }
+    if (!reset && knownScope) {
+      TF_SELECTION current{};
+      ULONG fetched = 0;
+      BOOL collapsed = FALSE;
+      const bool permitted =
+          SUCCEEDED(context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1,
+                                          &current, &fetched)) &&
+          fetched == 1 && current.range &&
+          SUCCEEDED(current.range->IsEmpty(cookie, &collapsed)) && collapsed;
+      release(current.range);
+      if (permitted) {
+        ITfRange *left = nullptr;
+        std::wstring surrounding;
+        if (SUCCEEDED(range->Clone(&left))) {
+          LONG moved = 0;
+          if (SUCCEEDED(left->Collapse(cookie, TF_ANCHOR_START)) &&
+              SUCCEEDED(left->ShiftStart(cookie, -256, &moved, nullptr))) {
+            wchar_t text[256];
+            ULONG count = 0;
+            if (SUCCEEDED(left->GetText(cookie, 0, text, 256, &count)))
+              surrounding.assign(text, count);
+          }
+          release(left);
+        }
+        if (!surrounding.empty() && surrounding.front() >= 0xdc00 &&
+            surrounding.front() <= 0xdfff)
+          surrounding.erase(0, 1);
+        if (!surrounding.empty() && surrounding.back() >= 0xd800 &&
+            surrounding.back() <= 0xdbff)
+          surrounding.pop_back();
+        if (!currentInput()) {
+          release(range);
+          return TF_E_DISCONNECTED;
+        }
+        session->context(utf8(surrounding), true, true);
+      }
+    }
+    if (!currentInput()) {
+      release(range);
+      return TF_E_DISCONNECTED;
+    }
     if (reset && fresh) {
       clearCore();
       release(range);
@@ -909,30 +950,60 @@ public:
     editing = true;
     if (fresh) {
       ITfContextComposition *owner = nullptr;
+      ITfComposition *started = nullptr;
       HRESULT hr = context->QueryInterface(IID_ITfContextComposition,
                                            reinterpret_cast<void **>(&owner));
       if (SUCCEEDED(hr)) {
-        hr = owner->StartComposition(cookie, range, this, &composition);
+        hr = owner->StartComposition(cookie, range, this, &started);
         release(owner);
       }
-      if (FAILED(hr) || !composition) {
+      if (!currentInput()) {
+        if (started)
+          started->EndComposition(cookie);
+        release(started);
+        editing = false;
+        release(range);
+        return TF_E_DISCONNECTED;
+      }
+      if (FAILED(hr) || !started) {
+        release(started);
         editing = false;
         release(range);
         return reportFailure("start composition", FAILED(hr) ? hr : E_FAIL);
       }
-      lifetimes[composition] = std::make_shared<CompositionLife>();
+      composition = started;
+      expectedComposition = composition;
+      expectedLife = std::make_shared<CompositionLife>();
+      lifetimes[composition] = expectedLife;
     }
     const TgskkView *view =
-        reset ? tgskk_session_reset(session) : keyView(symbol, modifiers);
+        reset ? session->reset() : keyView(symbol, modifiers);
     if (!view) {
+      if (session->takeTransportFailure()) {
+        const std::string error = session->error();
+        ITfComposition *failed = composition;
+        if (failed)
+          failed->AddRef();
+        if (auto found = lifetimes.find(failed);
+            failed && found != lifetimes.end()) {
+          const auto preedit = found->second->preedit;
+          eraseComposition(failed, cookie, preedit);
+        }
+        if (currentInput())
+          finish(cookie);
+        release(failed);
+        reportCoreFailure("broker request", error.c_str());
+      }
       editing = false;
       release(range);
       return E_FAIL;
     }
+    if (const auto diagnostic = session->takeDiagnostic(); !diagnostic.empty())
+      reportCoreFailure("broker status", diagnostic.c_str());
     bool consumed = view->consumed;
     if (!consumed && !*view->committed && !reset) {
       reset = true;
-      view = tgskk_session_reset(session);
+      view = session->reset();
       if (!view) {
         editing = false;
         release(range);
@@ -968,6 +1039,10 @@ public:
         result = TF_E_DISCONNECTED;
       if (SUCCEEDED(result) && preedit.empty()) {
         result = finish(cookie);
+        if (SUCCEEDED(result) && sameActivation() && !composition) {
+          expectedComposition = nullptr;
+          expectedLife.reset();
+        }
       } else if (SUCCEEDED(result) && !committed.empty()) {
         ITfComposition *current = composition;
         current->AddRef();
@@ -994,17 +1069,19 @@ public:
         result = context->SetSelection(cookie, 1, &selection);
       }
       hideCandidates();
+      if (!currentInput())
+        result = TF_E_DISCONNECTED;
       if (SUCCEEDED(result) && candidates && view->selecting &&
           view->selected >= inlineCandidates) {
-        std::wstring text;
+        std::wstring text = view->zenz_applied ? L"AI-ranked\r\n" : L"";
         const size_t start =
             tgskk::candidatePageStart(view->selected, inlineCandidates);
         for (size_t i = start;
              i < view->candidate_count && i < start + pageSize; ++i) {
           text += (i == view->selected ? L"> " : L"  ") +
                   std::to_wstring(i - start + 1) + L" " +
-                  wide(tgskk_candidate_text(session, i));
-          const char *annotation = tgskk_candidate_annotation(session, i);
+                  wide(session->candidate(i));
+          const char *annotation = session->candidate(i, true);
           if (annotation && *annotation)
             text += L" " + wide(annotation);
           text += L"\r\n";
@@ -1019,7 +1096,10 @@ public:
             SetWindowPos(
                 candidates, HWND_TOPMOST, caret.left, caret.bottom, 320,
                 static_cast<int>(
-                    std::min(view->candidate_count - start, pageSize) * 24 + 8),
+                    (std::min(view->candidate_count - start, pageSize) +
+                     (view->zenz_applied ? 1 : 0)) *
+                        24 +
+                    8),
                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
           }
           release(viewport);

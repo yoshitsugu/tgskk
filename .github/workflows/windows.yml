@@ -36,6 +36,46 @@ jobs:
           $env:TGSKK_TEST_WORKER = "$pwd/build/zenz-windows/Release/tgskk-zenz-worker.exe"
           $env:TGSKK_TEST_MODEL = "$pwd/build/models/zenz-v3.2-small-Q5_K_M.gguf"
           cargo +1.88.0 test -p tgskk-zenz --test windows_worker --locked -- --ignored
+      - name: Build shared Windows broker
+        run: |
+          cargo +1.88.0 build --release -p tgskk-ffi --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake -S addons/windows -B build/windows -A x64 -DTGSKK_RUST_LIBRARY="$pwd/target/release/tgskk_ffi.lib"
+          cmake --build build/windows --config Release --parallel 2
+      - name: Test real model through authenticated broker
+        shell: pwsh
+        run: |
+          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          icacls "$pwd" /grant "*$($sid):(OI)(CI)F" /T /Q | Out-Null
+          & build/windows/Release/test-windows-user.exe "$pwd/build/windows/model-broker.log" `
+            "$pwd/build/windows/Release/test-windows-broker.exe" `
+            "$pwd/build/windows/Release/tgskk-broker.exe" "$pwd/examples/SKK-JISYO.demo.utf8" `
+            "$pwd/build/zenz-windows/Release/tgskk-zenz-worker.exe" "$pwd/build/models/zenz-v3.2-small-Q5_K_M.gguf"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test native TSF with real contextual AI
+        shell: pwsh
+        run: |
+          $env:TGSKK_DEBUG = '1'
+          $dll = "$pwd/build/windows/Release/tgskk-tip.dll"
+          & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --prepare-fixture
+          if ($LASTEXITCODE -ne 0) { throw "TSF fixture registration failed" }
+          try {
+            & build/windows/Release/test-windows-user.exe --standard-user "$pwd" "$pwd/build/windows/model-tsf.log" `
+              "$pwd/build/windows/Release/test-windows-broker.exe" `
+              "$pwd/build/windows/Release/tgskk-broker.exe" "$pwd/examples/SKK-JISYO.demo.utf8" `
+              --tsf-ai "$pwd/build/windows/Release/test-windows-tsf.exe" $dll "$pwd/examples/SKK-JISYO.demo.utf8" `
+              "$pwd/build/zenz-windows/Release/tgskk-zenz-worker.exe" "$pwd/build/models/zenz-v3.2-small-Q5_K_M.gguf"
+            if ($LASTEXITCODE -ne 0) { throw "Native TSF contextual AI test failed" }
+          } finally {
+            & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --remove-fixture
+            if ($LASTEXITCODE -ne 0) { throw "TSF fixture unregistration failed" }
+          }
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-model-broker-logs
+          path: build/windows/*.log
+          if-no-files-found: ignore
   desktop:
     runs-on: windows-2025
     timeout-minutes: 30
@@ -67,6 +107,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows C ABI
         run: ctest --test-dir build/windows -C Release --output-on-failure --no-tests=error
+      - name: Test authenticated shared broker at medium integrity
+        shell: pwsh
+        run: |
+          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          icacls "$pwd" /grant "*$($sid):(OI)(CI)F" /T /Q | Out-Null
+          & build/windows/Release/test-windows-user.exe "$pwd/build/windows/broker.log" `
+            "$pwd/build/windows/Release/test-windows-broker.exe" `
+            "$pwd/build/windows/Release/tgskk-broker.exe" "$pwd/examples/SKK-JISYO.demo.utf8"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test TSF on Windows
         shell: pwsh
         run: |
@@ -82,6 +131,8 @@ jobs:
           & $test $dll $dictionary
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $test $dll $dictionary --direct-key
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $test $dll $dictionary --reentrant-scope
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $control = @(& $test $dll $dictionary --rejection-control 2>&1)
           $controlCode = $LASTEXITCODE
@@ -107,3 +158,29 @@ jobs:
             }
           }
           exit 0
+      - name: Test native TSF with the shared broker
+        shell: pwsh
+        run: |
+          $env:TGSKK_DEBUG = '1'
+          $text = [System.IO.File]::ReadAllText("$pwd/examples/SKK-JISYO.demo.utf8")
+          $text += "`nこう /" + ((1..14 | ForEach-Object { '候補{0:D2}' -f $_ }) -join '/') + "/`n"
+          [System.IO.File]::WriteAllText("$pwd/build/windows/broker-dictionary.utf8", $text, [System.Text.UTF8Encoding]::new($false))
+          $dll = "$pwd/build/windows/Release/tgskk-tip.dll"
+          & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --prepare-fixture
+          if ($LASTEXITCODE -ne 0) { throw "TSF fixture registration failed" }
+          try {
+            & build/windows/Release/test-windows-user.exe --standard-user "$pwd" "$pwd/build/windows/tsf-broker.log" `
+              "$pwd/build/windows/Release/test-windows-broker.exe" `
+              "$pwd/build/windows/Release/tgskk-broker.exe" "$pwd/build/windows/broker-dictionary.utf8" `
+              --tsf "$pwd/build/windows/Release/test-windows-tsf.exe" $dll "$pwd/build/windows/SKK-JISYO.L"
+            if ($LASTEXITCODE -ne 0) { throw "Medium-integrity TSF broker test failed" }
+          } finally {
+            & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --remove-fixture
+            if ($LASTEXITCODE -ne 0) { throw "TSF fixture unregistration failed" }
+          }
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-desktop-broker-logs
+          path: build/windows/*.log
+          if-no-files-found: ignore

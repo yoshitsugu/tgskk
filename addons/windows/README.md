@@ -4,22 +4,29 @@ An experimental x64 TSF frontend for ordinary desktop applications.
 It uses the same Rust/CSKK input engine as the Linux frontends.
 This is a developer build, without an installer or signed release binaries.
 
-The frontend supports kana input, okurigana, dictionary conversion, in-session
-word entry, and keyboard candidate selection. The first four candidates stay
-inline; subsequent candidates appear in pages of seven. Space and `x` cycle
+The frontend supports kana input, okurigana, dictionary conversion, word entry,
+persistent learning, local AI ranking and SKK servers. The first four candidates
+stay inline; subsequent candidates appear in pages of seven. Space and `x` cycle
 inline candidates or move between pages; Page Up/Down, Up/Down and `1`–`7` are
-also available.
+also available. AI-reordered candidate pages carry a small `AI-ranked` label.
 
-User dictionary learning and persistence, AI assistance, SKK server integration, mouse
-candidate selection and Windows language-bar controls are not connected to this
-frontend. The native AI worker and managed helper transport can be built and
-tested independently. Elevated applications, AppContainer applications, secure
-desktop, UI-less mode, 32-bit applications and ARM64 are outside this build's
-supported scope.
-New words can be committed, but are not remembered for subsequent conversions.
-ASCII mode currently commits each printable key through a short TSF composition;
+A per-logon `tgskk-broker.exe` shares dictionaries and background workers between
+applications. Each application has its own composition state. Dictionary saves,
+model loading, scoring and network requests run off the input thread. The TIP
+uses a local dictionary while connecting; it adopts the broker only between
+compositions. An IPC failure cancels the current composition and returns to
+local input. The failed key is not replayed because the broker may already have
+processed it. Local fallback has no persistent learning, AI or server access.
+
+Elevated applications, AppContainer applications, secure desktop, UI-less mode,
+32-bit applications and ARM64 are outside this build's supported scope. Mouse
+candidate selection and Windows language-bar controls are not implemented.
+ASCII mode commits each printable key through a short TSF composition;
 application completion and undo behavior may differ from ordinary keyboard input.
 Fields whose InputScope query fails disable input, as do password/private fields.
+AI and network access require a known non-private scope and a collapsed selection.
+Only bounded text left of the caret is used for local AI; servers receive readings,
+never surrounding text.
 
 ## Build
 
@@ -44,6 +51,14 @@ DLL from an elevated shell, then select tgskk in the Japanese input methods:
 regsvr32 "$pwd/build/windows/Release/tgskk-tip.dll"
 ```
 
+Keep `tgskk-broker.exe` beside the DLL. It starts automatically for normal
+medium-integrity desktop applications. Hosts that forbid child-process breakaway
+from a job may require starting the broker from a normal terminal first:
+
+```powershell
+& "$pwd/build/windows/Release/tgskk-broker.exe"
+```
+
 To remove the registration, close applications using tgskk and run:
 
 ```powershell
@@ -54,18 +69,92 @@ Unregister the old DLL before registering a build from a different directory.
 Do not move or delete a registered DLL. `TGSKK_DEBUG=1` writes TSF failure stages
 and HRESULTs to stderr as well as the debugger output, without input text.
 
+## Configuration
+
+Settings are read at application/broker startup from
+`%LOCALAPPDATA%\tgskk\windows.ini` (UTF-8). Relative paths are resolved from
+that directory. `TGSKK_WINDOWS_HOME` can point to another absolute directory for
+a separate configuration. Close input applications and stop the broker before
+changing settings or replacing its executable.
+
+```ini
+[General]
+Dictionary=C:\dictionaries\SKK-JISYO.L
+Encoding=euc-jp
+AI=true
+Skkserv=Google
+```
+
+AI and Google lookup are enabled by default. Missing optional binaries or a
+missing model leave dictionary input available and emit a diagnostic.
+For AI, place `tgskk-zenz-worker.exe` beside the broker and the verified model at
+`%LOCALAPPDATA%\tgskk\models\zenz-v3.2-small-Q5_K_M.gguf`.
+Build the worker from [native/zenz](../../native/zenz) using CMake/MSVC; the
+[Windows workflow](../../.github/workflows/windows.yml) shows the pinned source
+and model preparation. `Worker` and `Model` override their absolute or relative
+paths. Set `AI=false` to disable assistance.
+
+Build the bundled Google helper and copy it beside the broker:
+
+```powershell
+cargo build --release --manifest-path third_party/gskkserv/Cargo.toml `
+  --target-dir target --locked
+Copy-Item target/release/gskkserv.exe `
+  build/windows/Release/tgskk-google-skkserv.exe
+```
+
+`GoogleHelper` overrides its path. Set `Skkserv=Disabled` to opt out, or configure
+another server:
+
+```ini
+Skkserv=Custom
+Host=127.0.0.1
+Port=1178
+ServerEncoding=euc-jp
+```
+
+`ServerEncoding=utf-8` is also supported. Local dictionary hits never query a
+server. A missing-candidate lookup keeps the reading visible while fetching in
+the background; press Space again to use its cached result. Displayed candidate
+order never changes afterward. A cached miss enters word entry; Shift+Space,
+or Space after three seconds of unresolved lookup, also allows word entry.
+
+The UTF-8 user dictionary defaults to `SKK-JISYO.user` in the configuration
+directory; `UserDictionary` overrides it. Saves are asynchronous and coalesced
+after one second of idle input. The previous file remains as `.BAK`.
+A persistent `.lock` file prevents simultaneous writers, including brokers with
+different configurations pointing at the same dictionary. A second writer uses
+a read-only snapshot. Do not delete the lock file while a broker is running.
+Stop the broker normally (Ctrl+C in its terminal) to flush pending learning;
+force termination can lose recent learning. Unsaved changes remain in memory
+and retry after save errors, but cannot survive a crash or failed shutdown.
+
+Broker requests have a 50 ms processing/IPC failure deadline; operating-system scheduling
+and completion of canceled I/O can exceed it. This is a failure cutoff, not a
+scoring wait: model/server work is never awaited by an ordinary key. The input
+owner runs one Windows priority step above the scorer. Connection setup is asynchronous.
+Failures are visible through debugger output (`TGSKK_DEBUG=1` also uses stderr).
+No input text is included in broker connection/save diagnostics.
+
 ## Tests
 
 The Windows workflow builds with MSVC and runs the common Rust tests, the C ABI
 smoke test, managed child-process deadline tests and the real-model scoring
-suite. The scoring comparison builds the pinned pre-batching implementation
+suite. Medium-integrity integration tests exercise the authenticated broker,
+shared learning, atomic-save failure/retry, restart, stale/malformed IPC, session
+isolation, delayed UTF-8/EUC-JP servers, local-hit bypass and fallback. They also
+measure warm key RPC latency and run real-model context ranking through the
+broker. A native TSF run asserts that its keys reached the broker. The scoring comparison builds the pinned pre-batching implementation
 against the same Windows backend; Linux floating-point reference values are
 checked by the Linux worker tests.
 
 `test-windows-tsf.exe` exercises a real TSF document with an `ITextStoreACP`
 fixture. It registers and unregisters the DLL, and adds a temporary profile in
 the installed input language so a Japanese language pack is not required on the
-test runner. Run it in a disposable Windows environment. Its second argument is
+test runner. Native broker/AI TSF tests run under a disposable standard account,
+with registration prepared separately by an administrator. The CI-only launcher
+removes the account/profile and restores its temporary file/desktop access after
+draining child processes. Run registration tests in a disposable Windows environment. Its second argument is
 an EUC-JP test dictionary; the workflow shows how to prepare this fixture.
 
 On the Windows 2025 runner with this fixture, rejecting a composition retains a

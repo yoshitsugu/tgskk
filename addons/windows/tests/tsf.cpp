@@ -5,12 +5,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <functional>
 #include <inputscope.h>
+#include <memory>
 #include <msctf.h>
 #include <stdexcept>
 #include <string>
 #include <textstor.h>
 #include <thread>
+#include <utility>
 #include <windows.h>
 
 static void require(bool condition, const char *reason) {
@@ -18,12 +21,23 @@ static void require(bool condition, const char *reason) {
     throw std::runtime_error(reason);
   }
 }
+const CLSID serviceId = {0xc7993bd4,
+                         0x1094,
+                         0x4968,
+                         {0xa3, 0x11, 0x3d, 0xb8, 0xa0, 0xe0, 0x17, 0x39}};
+const GUID profileId = {0x70c846ab,
+                        0x9fb5,
+                        0x43cb,
+                        {0x94, 0xbb, 0x74, 0x83, 0xb9, 0xb2, 0xf6, 0xf8}};
 class Scope final : public ITfInputScope {
   ULONG refs = 1;
   InputScope value;
+  std::shared_ptr<std::function<void()>> onRead;
 
 public:
-  explicit Scope(InputScope scope) : value(scope) {}
+  explicit Scope(InputScope scope,
+                 std::shared_ptr<std::function<void()>> callback = {})
+      : value(scope), onRead(std::move(callback)) {}
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
     if (!out)
       return E_POINTER;
@@ -43,6 +57,9 @@ public:
   }
   HRESULT STDMETHODCALLTYPE GetInputScopes(InputScope **out,
                                            UINT *count) override {
+    if (onRead)
+      if (auto callback = std::exchange(*onRead, {}))
+        callback();
     *count = 0;
     *out = static_cast<InputScope *>(CoTaskMemAlloc(sizeof(InputScope)));
     if (!*out)
@@ -90,6 +107,8 @@ public:
   bool holdAsync = false;
   InputScope scope = IS_DEFAULT;
   bool scopeFailure = false;
+  std::shared_ptr<std::function<void()>> scopeRead =
+      std::make_shared<std::function<void()>>();
   ULONG endedCompositions = 0, startedCompositions = 0;
   HWND window = nullptr;
   ~Store() {
@@ -305,7 +324,7 @@ public:
       values[0].dwOverlapId = 0;
       VariantInit(&values[0].varValue);
       values[0].varValue.vt = VT_UNKNOWN;
-      values[0].varValue.punkVal = new Scope(scope);
+      values[0].varValue.punkVal = new Scope(scope, scopeRead);
       *count = 1;
       scopeRequested = false;
     }
@@ -543,7 +562,8 @@ public:
 int run(int argc, char **argv) {
   require(argc == 3 || argc == 4,
           "Usage: test-tsf dll euc-jp-dictionary "
-          "[--rejection|--rejection-control|--direct-key]");
+          "[--rejection|--rejection-control|--direct-key|--ai|--reentrant-"
+          "scope]");
   const std::string mode = argc == 4 ? argv[3] : "";
   SetEnvironmentVariableA("TGSKK_DICTIONARY", argv[2]);
   require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
@@ -561,10 +581,7 @@ int run(int argc, char **argv) {
       GetProcAddress(dll, "DllCanUnloadNow"));
   RegistrationGuard cleanup{unregistration};
   require(getFactory && unload, "COM exports");
-  CLSID serviceId = {0xc7993bd4,
-                     0x1094,
-                     0x4968,
-                     {0xa3, 0x11, 0x3d, 0xb8, 0xa0, 0xe0, 0x17, 0x39}};
+
   IClassFactory *factory = nullptr;
   require(SUCCEEDED(getFactory(serviceId, IID_IClassFactory,
                                reinterpret_cast<void **>(&factory))),
@@ -579,9 +596,14 @@ int run(int argc, char **argv) {
   service = nullptr;
   require(unload() == S_OK, "manual COM ownership leaked");
   require(registration && unregistration, "registration exports");
-  require(SUCCEEDED(registration()), "TSF registration");
-  cleanup.active = true;
-  require(registration() == S_OK, "repeated TSF registration");
+  const bool externalRegistration =
+      GetEnvironmentVariableW(L"TGSKK_TEST_EXTERNAL_REGISTRATION", nullptr, 0) >
+      0;
+  if (!externalRegistration) {
+    require(SUCCEEDED(registration()), "TSF registration");
+    cleanup.active = true;
+    require(registration() == S_OK, "repeated TSF registration");
+  }
   ITfThreadMgr *manager = nullptr;
   require(SUCCEEDED(CoCreateInstance(CLSID_TF_ThreadMgr, nullptr,
                                      CLSCTX_INPROC_SERVER, IID_ITfThreadMgr,
@@ -614,7 +636,7 @@ int run(int argc, char **argv) {
       SUCCEEDED(manager->AssociateFocus(store->window, document, &previous)),
       "associate window focus");
   CaptureRegistration captured;
-  if (mode == "--direct-key") {
+  if (mode == "--direct-key" || mode.starts_with("--reentrant-")) {
     require(SUCCEEDED(getFactory(serviceId, IID_IClassFactory,
                                  reinterpret_cast<void **>(&factory))),
             "capturing factory target");
@@ -624,10 +646,7 @@ int run(int argc, char **argv) {
                 REGCLS_MULTIPLEUSE, &captured.cookie)),
             "capturing factory registration");
   }
-  GUID profileId = {0x70c846ab,
-                    0x9fb5,
-                    0x43cb,
-                    {0x94, 0xbb, 0x74, 0x83, 0xb9, 0xb2, 0xf6, 0xf8}};
+
   ITfInputProcessorProfiles *profiles = nullptr;
   require(SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
                                      CLSCTX_INPROC_SERVER,
@@ -647,7 +666,7 @@ int run(int argc, char **argv) {
   SysFreeString(description);
   // Hosted Windows runners lack Japanese language support. Route the same TIP
   // through a temporary profile in the runner's installed input language.
-  if (language != japanese)
+  if (language != japanese && !externalRegistration)
     require(SUCCEEDED(profiles->AddLanguageProfile(serviceId, language,
                                                    profileId, L"tgskk test", 10,
                                                    nullptr, 0, 0)),
@@ -655,9 +674,12 @@ int run(int argc, char **argv) {
   require(SUCCEEDED(profiles->EnableLanguageProfile(serviceId, language,
                                                     profileId, TRUE)),
           "enable profile");
-  require(SUCCEEDED(profiles->ActivateLanguageProfile(serviceId, language,
-                                                      profileId)),
-          "profile activation");
+  const auto activated =
+      profiles->ActivateLanguageProfile(serviceId, language, profileId);
+  if (FAILED(activated))
+    std::fprintf(stderr, "TSF profile activation HRESULT=%08lx lang=%04x\n",
+                 activated, language);
+  require(SUCCEEDED(activated), "profile activation");
   pump();
   require(SUCCEEDED(manager->SetFocus(document)), "focus activated document");
   ITfKeystrokeMgr *keys = nullptr;
@@ -768,6 +790,59 @@ int run(int argc, char **argv) {
     store->refuseComposition = false;
     require(key('A'), "input after rejected composition");
     require(store->text == L"あ", "rejected composition advanced input state");
+  } else if (mode.starts_with("--reentrant-")) {
+    auto *direct = captured.factory->sink;
+    require(direct != nullptr, "capture reentrant service");
+    ITfTextInputProcessor *processor = nullptr;
+    require(
+        SUCCEEDED(direct->QueryInterface(
+            IID_ITfTextInputProcessor, reinterpret_cast<void **>(&processor))),
+        "reentrant processor");
+    store->replace(L"駅で");
+    pump();
+    bool called = false;
+    HRESULT deactivated = E_FAIL;
+    auto callback = [&] {
+      called = true;
+      std::puts("Host scope callback entered.");
+      std::fflush(stdout);
+      deactivated = processor->Deactivate();
+    };
+    *store->scopeRead = callback;
+    const bool consumed = key('K', true);
+    *store->scopeRead = {};
+    require(!consumed, "invalidated service consumed key");
+    require(called && SUCCEEDED(deactivated),
+            "read callback did not deactivate service");
+    require(store->text == L"駅で", "reentrant deactivation changed document");
+    processor->Release();
+    require(SUCCEEDED(captured.close()), "close reentrant factory");
+    std::puts("Deactivation during host reads leaves document unchanged.");
+  } else if (mode == "--ai") {
+    auto convert = [&](const std::wstring &prefix) {
+      store->replace(prefix);
+      pump();
+      require(key('K', true) && key('I') && key('S') && key('H') && key('A') &&
+                  key(VK_SPACE),
+              "contextual conversion keys");
+    };
+    bool train = false;
+    for (unsigned attempt = 0; attempt < 5; ++attempt) {
+      convert(L"駅で");
+      train = store->text == L"駅で▼汽車";
+      if (train)
+        break;
+      terminate(true);
+    }
+    require(train, "native TSF did not use left context for train ranking");
+    require(key(VK_RETURN), "commit contextual train");
+    require(store->text == L"駅で汽車", "contextual train commit");
+    convert(L"新聞の");
+    require(store->text == L"新聞の▼記者",
+            "native TSF retained stale train context");
+    require(key(VK_RETURN), "commit contextual reporter");
+    require(store->text == L"新聞の記者", "contextual reporter commit");
+    std::puts("Native TSF surrounding-text AI ranking and commit passed.");
   } else if (mode.empty()) {
     require(key('K', true), "uppercase kana rejected");
     require(key('A'), "kana continuation");
@@ -946,13 +1021,42 @@ int run(int argc, char **argv) {
   std::fprintf(stderr, "test store released references=%lu\n",
                store->Release());
   pump();
-  require(SUCCEEDED(unregistration()), "TSF unregistration");
-  require(unregistration() == S_OK, "repeated TSF unregistration");
-  cleanup.active = false;
+  if (!externalRegistration) {
+    require(SUCCEEDED(unregistration()), "TSF unregistration");
+    require(unregistration() == S_OK, "repeated TSF unregistration");
+    cleanup.active = false;
+  }
   pump();
   CoFreeUnusedLibrariesEx(0, 0);
   CoUninitialize();
   FreeLibrary(dll);
+  return 0;
+}
+int prepareFixture(HMODULE dll, bool remove) {
+  auto registration = reinterpret_cast<HRESULT(WINAPI *)()>(GetProcAddress(
+      dll, remove ? "DllUnregisterServer" : "DllRegisterServer"));
+  require(registration != nullptr, "fixture registration export");
+  require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
+          "fixture COM");
+  require(SUCCEEDED(registration()), "fixture registration");
+  if (!remove) {
+    ITfInputProcessorProfiles *profiles = nullptr;
+    require(SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                                       CLSCTX_INPROC_SERVER,
+                                       IID_ITfInputProcessorProfiles,
+                                       reinterpret_cast<void **>(&profiles))),
+            "fixture profiles");
+    LANGID language = 0;
+    require(SUCCEEDED(profiles->GetCurrentLanguage(&language)),
+            "fixture language");
+    if (language != MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT))
+      require(SUCCEEDED(profiles->AddLanguageProfile(serviceId, language,
+                                                     profileId, L"tgskk test",
+                                                     10, nullptr, 0, 0)),
+              "fixture temporary profile");
+    profiles->Release();
+  }
+  CoUninitialize();
   return 0;
 }
 int main(int argc, char **argv) {
@@ -960,13 +1064,26 @@ int main(int argc, char **argv) {
   try {
     require(argc == 3 || argc == 4,
             "Usage: test-tsf dll euc-jp-dictionary "
-            "[--rejection|--rejection-control|--direct-key]");
+            "[--rejection|--rejection-control|--direct-key|--ai|--reentrant-"
+            "scope]");
     require(argc == 3 || std::string(argv[3]) == "--rejection" ||
                 std::string(argv[3]) == "--rejection-control" ||
-                std::string(argv[3]) == "--direct-key",
+                std::string(argv[3]) == "--direct-key" ||
+                std::string(argv[3]) == "--ai" ||
+                std::string(argv[3]) == "--reentrant-scope" ||
+                std::string(argv[3]) == "--prepare-fixture" ||
+                std::string(argv[3]) == "--remove-fixture",
             "unknown test mode");
     dll = LoadLibraryA(argv[1]);
     require(dll != nullptr, "retain test DLL");
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    if (argc == 4 && (std::string(argv[3]) == "--prepare-fixture" ||
+                      std::string(argv[3]) == "--remove-fixture")) {
+      const auto result =
+          prepareFixture(dll, std::string(argv[3]) == "--remove-fixture");
+      FreeLibrary(dll);
+      return result;
+    }
     auto unload = reinterpret_cast<HRESULT(WINAPI *)()>(
         GetProcAddress(dll, "DllCanUnloadNow"));
     require(unload != nullptr, "unload export");
@@ -983,7 +1100,14 @@ int main(int argc, char **argv) {
     if (error)
       std::rethrow_exception(error);
     const std::string mode = argc == 4 ? argv[3] : "";
-    const HRESULT unloaded = unload();
+    const auto unloadDeadline = GetTickCount64() + 4000;
+    HRESULT unloaded;
+    do {
+      unloaded = unload();
+      if (unloaded == S_OK)
+        break;
+      Sleep(10);
+    } while (GetTickCount64() < unloadDeadline);
     if (mode == "--rejection" && unloaded == S_FALSE) {
       std::fputs("Windows retained the rejected composition sink; compare with "
                  "the independent control.\n",
