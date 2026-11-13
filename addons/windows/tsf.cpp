@@ -706,16 +706,18 @@ public:
       result = eraseComposition(value, cookie, life->preedit);
       editing = false;
     }
-    if (!editing && value == composition) {
+    if (value == composition) {
       release(composition);
       cancelPending = false;
-      clearCore();
+      if (!editing)
+        clearCore();
       if (!manager)
         release(active);
     }
-    return FAILED(result)
-               ? reportFailure("forced composition termination", result)
-               : S_OK;
+    if (FAILED(result))
+      reportFailure("forced composition termination", result);
+    // The notification is complete even when restoring the caret failed.
+    return S_OK;
   }
   HRESULT STDMETHODCALLTYPE OnSetThreadFocus() override {
     if (cancelPending)
@@ -896,6 +898,9 @@ public:
         return E_FAIL;
       }
     }
+    // Application callbacks can deactivate the service and invalidate its view.
+    const TgskkView snapshot = *view;
+    view = &snapshot;
     std::wstring committed = wide(view->committed),
                  preedit = wide(view->preedit);
     HRESULT result = S_OK;
@@ -918,19 +923,29 @@ public:
         if (found != lifetimes.end())
           found->second->preedit = preedit;
       }
+      if (SUCCEEDED(result) && !preedit.empty() && !composition)
+        result = TF_E_DISCONNECTED;
       if (SUCCEEDED(result) && preedit.empty()) {
         result = finish(cookie);
       } else if (SUCCEEDED(result) && !committed.empty()) {
+        ITfComposition *current = composition;
+        current->AddRef();
         ITfRange *tail = nullptr;
         result = range->Clone(&tail);
         if (SUCCEEDED(result)) {
           LONG shifted = 0;
           result = tail->ShiftStart(cookie, static_cast<LONG>(committed.size()),
                                     &shifted, nullptr);
-          if (SUCCEEDED(result))
-            result = composition->ShiftStart(cookie, tail);
+          if (SUCCEEDED(result)) {
+            if (composition != current ||
+                shifted != static_cast<LONG>(committed.size()))
+              result = TF_E_DISCONNECTED;
+            else
+              result = current->ShiftStart(cookie, tail);
+          }
           release(tail);
         }
+        current->Release();
       }
       if (SUCCEEDED(result) && changed) {
         range->Collapse(cookie, TF_ANCHOR_END);
@@ -972,6 +987,10 @@ public:
           release(viewport);
         }
       }
+    }
+    if (!reset && !preedit.empty() && !composition) {
+      clearCore();
+      result = TF_E_DISCONNECTED;
     }
     editing = false;
     release(range);

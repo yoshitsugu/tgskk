@@ -23,3 +23,6 @@ struct ITfTextInputProcessorEx : ITfTextInputProcessor {
 #ifndef TF_CLIENTID_NULL
 #define TF_CLIENTID_NULL ((TfClientId)0)
 #endif
+#ifndef TF_IPPMF_FORPROCESS
+#define TF_IPPMF_FORPROCESS 0x10000000
+#endif
