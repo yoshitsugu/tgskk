@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <inputscope.h>
 #include <msctf.h>
 #include <stdexcept>
 #include <string>
 #include <textstor.h>
+#include <thread>
 #include <windows.h>
 
 static void require(bool condition, const char *reason) {
@@ -724,11 +726,11 @@ int run(int argc, char **argv) {
     replaced->Release();
   if (previous)
     previous->Release();
-  document->Pop(TF_POPF_ALL);
+  require(SUCCEEDED(document->Pop(TF_POPF_ALL)), "pop document contexts");
   context->Release();
   document->Release();
   emptyDocument->Release();
-  manager->Deactivate();
+  require(SUCCEEDED(manager->Deactivate()), "deactivate thread manager");
   manager->Release();
   DestroyWindow(store->window);
   store->Release();
@@ -739,16 +741,38 @@ int run(int argc, char **argv) {
   pump();
   CoFreeUnusedLibrariesEx(0, 0);
   CoUninitialize();
-  require(unload() == S_OK, "COM objects leaked");
   FreeLibrary(dll);
-  std::puts("TSF composition, rejection, key propagation, focus and COM "
-            "lifetime passed.");
   return 0;
 }
 int main(int argc, char **argv) {
+  HMODULE dll = nullptr;
   try {
-    return run(argc, argv);
+    require(argc == 3, "Usage: test-tsf dll euc-jp-dictionary");
+    dll = LoadLibraryA(argv[1]);
+    require(dll != nullptr, "retain test DLL");
+    auto unload = reinterpret_cast<HRESULT(WINAPI *)()>(
+        GetProcAddress(dll, "DllCanUnloadNow"));
+    require(unload != nullptr, "unload export");
+    std::exception_ptr error;
+    int result = 1;
+    std::thread inputThread([&] {
+      try {
+        result = run(argc, argv);
+      } catch (...) {
+        error = std::current_exception();
+      }
+    });
+    inputThread.join();
+    if (error)
+      std::rethrow_exception(error);
+    require(unload() == S_OK, "COM objects remain after input-thread exit");
+    std::puts("TSF composition, rejection, key propagation, focus and COM "
+              "lifetime passed.");
+    FreeLibrary(dll);
+    return result;
   } catch (const std::exception &error) {
+    if (dll)
+      FreeLibrary(dll);
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
   }

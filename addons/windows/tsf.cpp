@@ -28,10 +28,11 @@ const GUID profileId = {0x70c846ab,
 HMODULE module;
 std::atomic<long> objects = 0;
 std::atomic<long> locks = 0;
-void traceObject(const char *operation, long count) {
+void traceCount(const char *operation, long count,
+                const char *kind = "objects") {
   wchar_t enabled[2];
   if (GetEnvironmentVariableW(L"TGSKK_DEBUG", enabled, 2))
-    std::fprintf(stderr, "tgskk: %s objects=%ld\n", operation, count);
+    std::fprintf(stderr, "tgskk: %s %s=%ld\n", operation, kind, count);
 }
 HRESULT reportFailure(const char *stage, HRESULT result) {
   char message[160];
@@ -136,11 +137,11 @@ public:
       : composition(value), life(std::move(token)) {
     life->erase &= clear;
     composition->AddRef();
-    traceObject("cleanup created", ++objects);
+    traceCount("cleanup created", ++objects);
   }
   ~Cleanup() {
     composition->Release();
-    traceObject("cleanup destroyed", --objects);
+    traceCount("cleanup destroyed", --objects);
   }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
     if (!out)
@@ -445,10 +446,10 @@ class Service final : public ITfTextInputProcessorEx,
   }
 
 public:
-  Service() { traceObject("service created", ++objects); }
+  Service() { traceCount("service created", ++objects); }
   ~Service() {
     Deactivate();
-    traceObject("service destroyed", --objects);
+    traceCount("service destroyed", --objects);
   }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **out) override {
     if (!out)
@@ -564,6 +565,7 @@ public:
     }
   }
   HRESULT STDMETHODCALLTYPE Deactivate() override {
+    traceCount("deactivate entered", refs.load(), "references");
     bool ended = abandon();
     unwatch();
     if (ended)
@@ -598,6 +600,7 @@ public:
     if (runtime)
       tgskk_runtime_free(runtime);
     runtime = nullptr;
+    traceCount("deactivate completed", refs.load(), "references");
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext *context, WPARAM key,
@@ -1030,8 +1033,8 @@ class Factory final : public IClassFactory {
   std::atomic<ULONG> refs{1};
 
 public:
-  Factory() { traceObject("factory created", ++objects); }
-  ~Factory() { traceObject("factory destroyed", --objects); }
+  Factory() { traceCount("factory created", ++objects); }
+  ~Factory() { traceCount("factory destroyed", --objects); }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **out) override {
     if (!out)
       return E_POINTER;
@@ -1129,7 +1132,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
 }
 extern "C" HRESULT __stdcall DllCanUnloadNow() {
   if (objects != 0)
-    traceObject("unload pending", objects.load());
+    traceCount("unload pending", objects.load());
   return objects == 0 && locks == 0 ? S_OK : S_FALSE;
 }
 extern "C" HRESULT __stdcall DllGetClassObject(REFCLSID id, REFIID iid,
