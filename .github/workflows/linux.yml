@@ -1,0 +1,35 @@
+name: Linux packages
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [arch, debian-13, ubuntu-24.04, ubuntu-26.04]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build, test, install and remove
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          python3 scripts/zenz_model.py --directory build/models
+          export TGSKK_TEST_MODEL="$PWD/build/models/zenz-v3.2-small-Q5_K_M.gguf"
+          bash scripts/build-package.sh "$TARGET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tgskk-${{ matrix.target }}-x86_64
+          path: build/packages/${{ matrix.target }}/*
+          if-no-files-found: error
+          retention-days: 14
