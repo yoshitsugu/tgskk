@@ -92,6 +92,7 @@ public:
   ULONG endedCompositions = 0;
   HWND window = nullptr;
   ~Store() {
+    std::fputs("test store destroyed\n", stderr);
     if (sink)
       sink->Release();
   }
@@ -122,6 +123,7 @@ public:
     return value->QueryInterface(id, reinterpret_cast<void **>(&sink));
   }
   HRESULT STDMETHODCALLTYPE UnadviseSink(IUnknown *) override {
+    std::fputs("test store unadvised\n", stderr);
     if (sink) {
       sink->Release();
       sink = nullptr;
@@ -703,6 +705,23 @@ int run(int argc, char **argv) {
   require(key('I'), "input after cleanup selection failure");
   require(store->text == L"い",
           "cleanup selection failure retained input state");
+  ITfContextComposition *remaining = nullptr;
+  require(
+      SUCCEEDED(context->QueryInterface(IID_ITfContextComposition,
+                                        reinterpret_cast<void **>(&remaining))),
+      "final compositions");
+  IEnumITfCompositionView *items = nullptr;
+  require(SUCCEEDED(remaining->EnumCompositions(&items)),
+          "final composition enumeration");
+  ITfCompositionView *leftover = nullptr;
+  ULONG found = 0;
+  require(SUCCEEDED(items->Next(1, &leftover, &found)),
+          "final composition count");
+  if (leftover)
+    leftover->Release();
+  items->Release();
+  remaining->Release();
+  require(found == 0, "composition remained after final commit");
   keys->Release();
   require(SUCCEEDED(manager->SetFocus(emptyDocument)), "final focus loss");
   pump();
@@ -727,13 +746,15 @@ int run(int argc, char **argv) {
   if (previous)
     previous->Release();
   require(SUCCEEDED(document->Pop(TF_POPF_ALL)), "pop document contexts");
-  context->Release();
+  std::fprintf(stderr, "test context released references=%lu\n",
+               context->Release());
   document->Release();
   emptyDocument->Release();
   require(SUCCEEDED(manager->Deactivate()), "deactivate thread manager");
   manager->Release();
   DestroyWindow(store->window);
-  store->Release();
+  std::fprintf(stderr, "test store released references=%lu\n",
+               store->Release());
   pump();
   require(SUCCEEDED(unregistration()), "TSF unregistration");
   require(unregistration() == S_OK, "repeated TSF unregistration");

@@ -217,7 +217,9 @@ class Service final : public ITfTextInputProcessorEx,
       ITfSource *source = nullptr;
       if (SUCCEEDED(active->QueryInterface(
               IID_ITfSource, reinterpret_cast<void **>(&source)))) {
-        source->UnadviseSink(editCookie);
+        const HRESULT result = source->UnadviseSink(editCookie);
+        if (FAILED(result))
+          reportFailure("unwatch context", result);
         release(source);
       }
     }
@@ -476,6 +478,8 @@ public:
   ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
   ULONG STDMETHODCALLTYPE Release() override {
     auto n = --refs;
+    if (!manager || n <= 2)
+      traceCount("service released", n, "references");
     if (!n)
       delete this;
     return n;
@@ -568,22 +572,33 @@ public:
     traceCount("deactivate entered", refs.load(), "references");
     bool ended = abandon();
     unwatch();
+    traceCount("after context unwatch", refs.load(), "references");
     if (ended)
       release(active);
     if (manager) {
       ITfKeystrokeMgr *keys = nullptr;
       if (SUCCEEDED(manager->QueryInterface(
               IID_ITfKeystrokeMgr, reinterpret_cast<void **>(&keys)))) {
-        keys->UnadviseKeyEventSink(client);
+        const HRESULT result = keys->UnadviseKeyEventSink(client);
+        if (FAILED(result))
+          reportFailure("unadvise key sink", result);
         release(keys);
+        traceCount("after key sink removal", refs.load(), "references");
       }
       ITfSource *source = nullptr;
       if (threadCookie != TF_INVALID_COOKIE &&
           SUCCEEDED(manager->QueryInterface(
               IID_ITfSource, reinterpret_cast<void **>(&source)))) {
-        source->UnadviseSink(threadCookie);
-        if (focusCookie != TF_INVALID_COOKIE)
-          source->UnadviseSink(focusCookie);
+        HRESULT result = source->UnadviseSink(threadCookie);
+        if (FAILED(result))
+          reportFailure("unadvise thread sink", result);
+        traceCount("after thread sink removal", refs.load(), "references");
+        if (focusCookie != TF_INVALID_COOKIE) {
+          result = source->UnadviseSink(focusCookie);
+          if (FAILED(result))
+            reportFailure("unadvise focus sink", result);
+        }
+        traceCount("after focus sink removal", refs.load(), "references");
         release(source);
       }
     }
@@ -1005,10 +1020,12 @@ Edit::Edit(Service *value, ITfContext *ctx, uint32_t key, uint32_t mods,
     : owner(value), context(ctx), symbol(key), modifiers(mods), reset(clear) {
   owner->AddRef();
   context->AddRef();
+  traceCount("edit created", ++objects);
 }
 Edit::~Edit() {
   context->Release();
   owner->Release();
+  traceCount("edit destroyed", --objects);
 }
 HRESULT Edit::QueryInterface(REFIID iid, void **out) {
   if (!out)
