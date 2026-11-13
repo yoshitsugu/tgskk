@@ -174,6 +174,50 @@ impl InputSession {
 mod eligibility_tests {
     use super::*;
     #[test]
+    fn ineligible_keys_are_never_consumed_across_modes_and_compositions() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/SKK-JISYO.demo.utf8");
+        let prefixes: &[&[(u32, u32)]] = &[
+            &[],
+            &[(b'l' as u32, 0)],
+            &[(b'L' as u32, 1)],
+            &[(b'q' as u32, 0)],
+            &[(b'q' as u32, 4)],
+            &[(b'k' as u32, 0)],
+            &[(b'K' as u32, 1), (b'a' as u32, 0)],
+            &[
+                (b'K' as u32, 1),
+                (b'i' as u32, 0),
+                (b's' as u32, 0),
+                (b'h' as u32, 0),
+                (b'a' as u32, 0),
+                (b' ' as u32, 0),
+            ],
+            &[(b'M' as u32, 1), (b'i' as u32, 0), (b' ' as u32, 0)],
+        ];
+        for prefix in prefixes {
+            let mut input = InputSession::open(path.to_str().unwrap(), "utf-8").unwrap();
+            for modifiers in [0, 1, 4, 5, 8] {
+                for symbol in (0x20..=0x7e).chain([
+                    0xff08, 0xff09, 0xff0d, 0xff1b, 0xff51, 0xff52, 0xff53, 0xff54, 0xff55, 0xff56,
+                ]) {
+                    let _ = input.reset();
+                    input.process_key(&CskkKeyEvent::from_fcitx_keyevent(b'j' as u32, 4, false));
+                    for &(key, mods) in *prefix {
+                        input.process_key(&CskkKeyEvent::from_fcitx_keyevent(key, mods, false));
+                    }
+                    let key = CskkKeyEvent::from_fcitx_keyevent(symbol, modifiers, false);
+                    let eligible = input.may_process(&key);
+                    let outcome = input.process_key(&key);
+                    assert!(
+                        eligible || !outcome.consumed,
+                        "ineligible key was consumed: prefix={prefix:?} symbol={symbol:#x} modifiers={modifiers}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
     fn uppercase_start_and_repeated_queries_preserve_input_state() {
         for modifiers in [0, 1] {
             let mut checked = InputSession::with_dictionaries(vec![]).unwrap();

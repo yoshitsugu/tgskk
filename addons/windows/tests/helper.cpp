@@ -37,6 +37,7 @@ int wmain(int argc, wchar_t **argv) {
   if (!std::wcscmp(argv[1], L"--stdio")) {
     if (argc != 3 || std::wcscmp(argv[2], L"--encoding=utf-8"))
       return 2;
+    unsigned requests = 0;
     for (;;) {
       int code = std::fgetc(stdin);
       if (code == EOF || code == '0')
@@ -53,9 +54,15 @@ int wmain(int argc, wchar_t **argv) {
           break;
         reading.push_back(static_cast<char>(ch));
       }
-      if (reading != "\xe3\x81\x8d\xe3\x81\x97\xe3\x82\x83")
+      if (requests == 0 && reading == "\xe3\x81\x8d\xe3\x81\x97\xe3\x82\x83")
+        std::fputs("1/\xe6\xb1\xbd\xe8\xbb\x8a/\n", stdout);
+      else if (requests == 1 &&
+               reading == "\xe3\x81\x8b\xe3\x82\x93\xe3\x81\x98")
+        std::fputs("1/\xe6\xbc\xa2\xe5\xad\x97;\xe6\x96\x87\xe5\xad\x97/\n",
+                   stdout);
+      else
         return 3;
-      std::fputs("1/\xe6\xb1\xbd\xe8\xbb\x8a/\n", stdout);
+      ++requests;
       if (std::fflush(stdout))
         return 1;
     }
