@@ -17,7 +17,7 @@ geditでの実動作を録画しています。クリックでMP4を開きます
 
 ## インストール
 
-Arch Linux用PKGBUILDと、Debian 13、Ubuntu 24.04／26.04 LTS向け`.deb`の作成手順は[配布パッケージ](docs/distribution.md)を参照してください。
+Arch Linux用PKGBUILDと、Debian 13、Ubuntu 24.04／26.04 LTS向けfcitx5版・IBus版の`.deb`の作成手順は[配布パッケージ](docs/distribution.md)を参照してください。
 パッケージには推論用プログラムも含み、モデルは`tgskk-setup-model`で取得できます。
 
 IBus版をソースからビルドする場合は[IBusガイド](docs/ibus.md)を参照してください。

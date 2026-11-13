@@ -1,3 +1,9 @@
+tgskk (0.1.0-2) unstable; urgency=medium
+
+  * Add IBus support and split shared tools from frontend packages.
+
+ -- yoshitsugu <yoshitsugu@users.noreply.github.com>  Fri, 13 Nov 2026 00:00:00 +0000
+
 tgskk (0.1.0-1) unstable; urgency=medium
 
   * Initial package with CSKK, local ranking worker and Google SKK fallback.

@@ -15,8 +15,10 @@ override_dh_auto_test:
 	bash scripts/build-dist.sh check
 
 override_dh_auto_install:
-	bash scripts/build-dist.sh install $(CURDIR)/debian/tgskk
+	bash scripts/build-dist.sh install $(CURDIR)/debian/tgskk-common common
+	bash scripts/build-dist.sh install $(CURDIR)/debian/tgskk fcitx5
+	bash scripts/build-dist.sh install $(CURDIR)/debian/tgskk-ibus ibus
 
 override_dh_auto_clean:
 	# Prepared dependencies are inputs to the offline build.
-	rm -rf target build/fcitx5 build/zenz
+	rm -rf target build/fcitx5 build/ibus build/zenz

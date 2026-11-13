@@ -4,6 +4,13 @@ IBus版はfcitx5版と同じ変換コアを使います。
 最初の4候補はインライン、5候補目から候補一覧を表示します。
 設定・ユーザー辞書はfcitx5版と別に管理します。
 
+## パッケージから導入
+
+Arch Linux、Debian 13、Ubuntu 24.04／26.04 LTS向けの作成・導入手順は[配布パッケージ](distribution.md)を参照してください。
+`tgskk-common`と`tgskk-ibus`（Archでは末尾に`-git`）を一緒にインストールします。
+fcitx5版を導入する必要はありません。
+パッケージ導入後は、文脈補助を使う場合に`tgskk-setup-model`を一般ユーザーで実行します。
+
 ## ソースからビルドして導入
 
 Rust 1.88以降、C++20、CMake、Ninja、pkg-config、libxkbcommon、IBus 1.5.26以降とGLibの開発ファイル、D-Busが必要です。

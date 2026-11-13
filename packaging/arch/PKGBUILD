@@ -1,16 +1,14 @@
 # Maintainer: yoshitsugu
 # shellcheck shell=bash disable=SC2034,SC2154
-pkgname=tgskk-git
+pkgbase=tgskk-git
+pkgname=('tgskk-common-git' 'tgskk-git' 'tgskk-ibus-git')
 pkgver=0.1.0
-pkgrel=1
-pkgdesc='SKK input method for fcitx5 with local AI ranking and Google fallback'
+pkgrel=2
+pkgdesc='SKK input method with local AI ranking and Google fallback'
 arch=('x86_64')
 url='https://github.com/yoshitsugu/tgskk'
 license=('GPL-3.0-or-later')
-depends=('fcitx5>=5.1.7' 'libxkbcommon' 'gcc-libs' 'glibc' 'python>=3.12' 'skk-jisyo')
-makedepends=('git' 'rust>=1.88' 'cargo>=1.88' 'cmake' 'ninja' 'pkgconf')
-provides=('tgskk')
-conflicts=('tgskk')
+makedepends=('git' 'rust>=1.88' 'cargo>=1.88' 'cmake' 'ninja' 'pkgconf' 'fcitx5>=5.1.7' 'ibus>=1.5.26' 'dbus' 'python>=3.12' 'skk-jisyo')
 # Mixed Rust/C archives cannot use makepkg's GCC LTO; Cargo manages Rust LTO.
 options=('!debug' '!lto')
 source=('tgskk::git+https://github.com/yoshitsugu/tgskk.git')
@@ -24,23 +22,39 @@ pkgver() {
     printf '%s' "$pkgver"
   fi
 }
-
 prepare() {
   cd "$srcdir/tgskk" || return
   bash scripts/build-dist.sh prepare
 }
-
 build() {
   cd "$srcdir/tgskk" || return
   bash scripts/build-dist.sh build
 }
-
 check() {
   cd "$srcdir/tgskk" || return
   bash scripts/build-dist.sh check
 }
-
-package() {
+package_tgskk-common-git() {
+  pkgdesc='Shared model tools and workers for tgskk'
+  depends=('gcc-libs' 'glibc' 'python>=3.12' 'skk-jisyo')
+  provides=("tgskk-common=$pkgver")
+  conflicts=('tgskk-common')
   cd "$srcdir/tgskk" || return
-  bash scripts/build-dist.sh install "$pkgdir"
+  bash scripts/build-dist.sh install "$pkgdir" common
+}
+package_tgskk-git() {
+  pkgdesc='SKK input method for fcitx5 with local context ranking'
+  depends=('fcitx5>=5.1.7' 'libxkbcommon' "tgskk-common-git=$pkgver-$pkgrel")
+  provides=('tgskk')
+  conflicts=('tgskk')
+  cd "$srcdir/tgskk" || return
+  bash scripts/build-dist.sh install "$pkgdir" fcitx5
+}
+package_tgskk-ibus-git() {
+  pkgdesc='SKK input method for IBus with local context ranking'
+  depends=('ibus>=1.5.26' 'libxkbcommon' "tgskk-common-git=$pkgver-$pkgrel")
+  provides=('tgskk-ibus')
+  conflicts=('tgskk-ibus')
+  cd "$srcdir/tgskk" || return
+  bash scripts/build-dist.sh install "$pkgdir" ibus
 }

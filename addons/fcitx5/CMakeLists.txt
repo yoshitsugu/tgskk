@@ -46,9 +46,12 @@ endif()
 set_target_properties(fcitx5-tgskk PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 
 install(TARGETS fcitx5-tgskk LIBRARY DESTINATION "${FCITX_INSTALL_ADDONDIR}")
-install(PROGRAMS "${TGSKK_GOOGLE_SKKSERV_BINARY}" DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}" RENAME tgskk-google-skkserv)
-install(FILES "${TGSKK_ROOT}/third_party/gskkserv/LICENSE-APACHE" "${TGSKK_ROOT}/third_party/gskkserv/UPSTREAM.md"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/tgskk/google-ime-skkserv")
+option(TGSKK_INSTALL_GOOGLE_HELPER "Install the shared Google helper" ON)
+if(TGSKK_INSTALL_GOOGLE_HELPER)
+  install(PROGRAMS "${TGSKK_GOOGLE_SKKSERV_BINARY}" DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}" RENAME tgskk-google-skkserv)
+  install(FILES "${TGSKK_ROOT}/third_party/gskkserv/LICENSE-APACHE" "${TGSKK_ROOT}/third_party/gskkserv/UPSTREAM.md"
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/tgskk/google-ime-skkserv")
+endif()
 install(FILES tgskk.conf DESTINATION "${FCITX_INSTALL_PKGDATADIR}/addon")
 install(FILES tgskk-inputmethod.conf DESTINATION "${FCITX_INSTALL_PKGDATADIR}/inputmethod" RENAME tgskk.conf)
 

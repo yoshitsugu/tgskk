@@ -4,16 +4,31 @@ Priority: optional
 Maintainer: yoshitsugu <yoshitsugu@users.noreply.github.com>
 Build-Depends: debhelper-compat (= 13), cmake (>= 3.20), ninja-build,
  g++, pkg-config, python3 (>= 3.12), cargo (>= 1.88), rustc (>= 1.88),
- libfcitx5core-dev (>= 5.1.7), libxkbcommon-dev, gettext
+ libfcitx5core-dev (>= 5.1.7), libibus-1.0-dev (>= 1.5.26), ibus, dbus,
+ libxkbcommon-dev, gettext
 Standards-Version: 4.7.0
 Homepage: https://github.com/yoshitsugu/tgskk
 Rules-Requires-Root: no
 
+Package: tgskk-common
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3 (>= 3.12), skkdic
+Breaks: tgskk (<< 0.1.0-2)
+Replaces: tgskk (<< 0.1.0-2)
+Description: Shared model tools and workers for tgskk
+ Includes the CPU inference worker and Google SKK server helper.
+ Model weights are installed separately with tgskk-setup-model.
+
 Package: tgskk
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, fcitx5 (>= 5.1.7), python3 (>= 3.12), skkdic
+Depends: ${shlibs:Depends}, ${misc:Depends}, tgskk-common (= ${binary:Version}), fcitx5 (>= 5.1.7)
 Description: SKK input method for fcitx5 with local context ranking
  Uses CSKK dictionaries for immediate conversion, optional local AI ranking,
  and a bundled Google SKK server for readings without local candidates.
- Includes the CPU inference worker; model weights are installed separately
- with tgskk-setup-model.
+
+Package: tgskk-ibus
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, tgskk-common (= ${binary:Version}), ibus (>= 1.5.26)
+Description: SKK input method for IBus with local context ranking
+ Uses CSKK dictionaries for immediate conversion, optional local AI ranking,
+ and a bundled Google SKK server for readings without local candidates.

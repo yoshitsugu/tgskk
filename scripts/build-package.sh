@@ -24,6 +24,9 @@ fi
 if [[ -n "${TGSKK_DOWNLOAD_CACHE:-}" ]]; then
   mounts+=(--mount "type=bind,src=$TGSKK_DOWNLOAD_CACHE,dst=/cached-downloads,readonly")
 fi
+if [[ -n "${TGSKK_LEGACY_PACKAGE:-}" ]]; then
+  mounts+=(--mount "type=bind,src=$TGSKK_LEGACY_PACKAGE,dst=/legacy-package,readonly")
+fi
 if [[ -n "${TGSKK_TEST_MODEL:-}" ]]; then
   mounts+=(--mount "type=bind,src=$TGSKK_TEST_MODEL,dst=/test-model.gguf,readonly")
 fi
