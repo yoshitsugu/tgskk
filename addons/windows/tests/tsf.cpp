@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../tsf_compat.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -411,15 +412,18 @@ struct RegistrationGuard {
                  stderr);
   }
 };
+std::atomic<bool> refusalProbeAlive = false;
 class RefusalProbe final : public ITfEditSession, public ITfCompositionSink {
   ULONG refs = 1;
   ITfContext *context;
-  bool withSink;
 
 public:
   bool called = false, accepted = false;
   HRESULT result = E_UNEXPECTED;
-  RefusalProbe(ITfContext *value, bool sink) : context(value), withSink(sink) {}
+  explicit RefusalProbe(ITfContext *value) : context(value) {
+    refusalProbeAlive = true;
+  }
+  ~RefusalProbe() { refusalProbeAlive = false; }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
     if (!out)
       return E_POINTER;
@@ -451,9 +455,11 @@ public:
     if (SUCCEEDED(result))
       result = context->QueryInterface(IID_ITfContextComposition,
                                        reinterpret_cast<void **>(&owner));
-    if (SUCCEEDED(result) && fetched == 1 && selection.range)
-      result = owner->StartComposition(cookie, selection.range,
-                                       withSink ? this : nullptr, &composition);
+    if (SUCCEEDED(result) && (fetched != 1 || !selection.range))
+      result = E_FAIL;
+    if (SUCCEEDED(result))
+      result =
+          owner->StartComposition(cookie, selection.range, this, &composition);
     accepted = composition != nullptr;
     if (composition) {
       composition->EndComposition(cookie);
@@ -471,8 +477,8 @@ public:
   }
 };
 int run(int argc, char **argv) {
-  require(argc == 3 || argc == 4,
-          "Usage: test-tsf dll euc-jp-dictionary [--activation-only]");
+  require(argc == 3 || argc == 4, "Usage: test-tsf dll euc-jp-dictionary "
+                                  "[--rejection|--rejection-control]");
   SetEnvironmentVariableA("TGSKK_DICTIONARY", argv[2]);
   require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
           "COM init");
@@ -640,14 +646,10 @@ int run(int argc, char **argv) {
     compositions->Release();
     pump();
   };
-  const std::string variant = argc == 4 ? argv[3] : "";
-  const int through = argc == 3 || variant == "--skip-refusal" ? 8
-                      : variant == "--only-refusal" ? 0
-                                                    : std::atoi(argv[3]);
-  if (variant == "--control-refusal" ||
-      variant == "--control-refusal-no-sink") {
+  const std::string mode = argc == 4 ? argv[3] : "";
+  if (mode == "--rejection-control") {
     store->refuseComposition = true;
-    auto *probe = new RefusalProbe(context, variant == "--control-refusal");
+    auto *probe = new RefusalProbe(context);
     HRESULT status = E_FAIL;
     require(SUCCEEDED(context->RequestEditSession(
                 id, probe, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &status)),
@@ -655,17 +657,14 @@ int run(int argc, char **argv) {
     pump();
     require(probe->called && probe->result == S_OK && !probe->accepted,
             "standalone refusal result");
-    std::fprintf(stderr, "standalone rejected sink retained references=%lu\n",
-                 probe->Release());
+    require(probe->Release() <= 1, "extra standalone refusal references");
     store->refuseComposition = false;
-  }
-  if (variant == "--only-refusal") {
+  } else if (mode == "--rejection") {
     store->refuseComposition = true;
     require(!key('K', true), "rejected composition consumed key");
     require(store->text.empty(), "rejected composition changed document");
     store->refuseComposition = false;
-  }
-  if (through >= 1) {
+  } else {
     require(key('K', true), "uppercase kana rejected");
     require(key('A'), "kana continuation");
     require(store->text == L"▽か", "wrong preedit");
@@ -675,14 +674,6 @@ int run(int argc, char **argv) {
     require(SUCCEEDED(manager->SetFocus(document)), "restore document");
     pump();
     require(store->text.empty(), "focus retained preedit");
-  }
-  if (through >= 2) {
-    if (variant != "--skip-refusal") {
-      store->refuseComposition = true;
-      require(!key('K', true), "rejected composition consumed key");
-      require(store->text.empty(), "rejected composition changed document");
-      store->refuseComposition = false;
-    }
     require(!key('K', false, true), "Win shortcut consumed");
     require(store->text.empty(), "Win shortcut changed document");
     for (auto scope : {IS_PASSWORD, IS_PRIVATE}) {
@@ -697,8 +688,7 @@ int run(int argc, char **argv) {
     require(store->text.empty(), "unknown field scope changed document");
     store->setScope(IS_DEFAULT);
     pump();
-  }
-  if (through >= 3) {
+
     require(key('K', true) && key('A'), "start before forced termination");
     terminate(true);
     require(store->text.empty(), "forced termination retained preedit");
@@ -709,8 +699,7 @@ int run(int argc, char **argv) {
     require(store->text == L"外部", "termination erased external edits");
     store->replace(L"");
     pump();
-  }
-  if (through >= 4) {
+
     require(key('K', true) && key('O') && key('U') && key(VK_SPACE),
             "candidate conversion");
     require(store->text == L"▼候補01", "first inline candidate");
@@ -731,8 +720,7 @@ int run(int argc, char **argv) {
             "numeric selection chose wrong candidate");
     store->replace(L"");
     pump();
-  }
-  if (through >= 5) {
+
     store->denyLock = true;
     require(!key('K', true), "unavailable edit lock consumed key");
     require(store->text.empty(), "unavailable edit lock changed document");
@@ -747,8 +735,6 @@ int run(int argc, char **argv) {
     require(store->text == L"いあ", "input used old caret position");
     store->replace(L"");
     pump();
-  }
-  if (through >= 6) {
     require(key('K', true) && key('A'), "start before delayed cleanup");
     store->holdAsync = true;
     require(SUCCEEDED(manager->SetFocus(emptyDocument)), "deferred focus loss");
@@ -767,8 +753,6 @@ int run(int argc, char **argv) {
     require(store->text == afterInput, "deferred cleanup erased later input");
     store->replace(L"");
     pump();
-  }
-  if (through >= 7) {
     require(key('K', true), "start after refusal");
     store->failSelection = true;
     require(key('A'), "post-insertion failure forwarded key twice");
@@ -778,8 +762,6 @@ int run(int argc, char **argv) {
             "post-insertion failure lost or duplicated input");
     store->replace(L"");
     pump();
-  }
-  if (through >= 8) {
     require(key('K', true) && key('A'),
             "start before cleanup selection failure");
     require(store->text == L"▽か",
@@ -872,8 +854,11 @@ int run(int argc, char **argv) {
 int main(int argc, char **argv) {
   HMODULE dll = nullptr;
   try {
-    require(argc == 3 || argc == 4,
-            "Usage: test-tsf dll euc-jp-dictionary [--activation-only]");
+    require(argc == 3 || argc == 4, "Usage: test-tsf dll euc-jp-dictionary "
+                                    "[--rejection|--rejection-control]");
+    require(argc == 3 || std::string(argv[3]) == "--rejection" ||
+                std::string(argv[3]) == "--rejection-control",
+            "unknown test mode");
     dll = LoadLibraryA(argv[1]);
     require(dll != nullptr, "retain test DLL");
     auto unload = reinterpret_cast<HRESULT(WINAPI *)()>(
@@ -891,14 +876,24 @@ int main(int argc, char **argv) {
     inputThread.join();
     if (error)
       std::rethrow_exception(error);
-    require(unload() == S_OK, "COM objects remain after input-thread exit");
-    std::puts("TSF composition, rejection, key propagation, focus and COM "
-              "lifetime passed.");
-    FreeLibrary(dll);
+    const std::string mode = argc == 4 ? argv[3] : "";
+    const HRESULT unloaded = unload();
+    if (mode == "--rejection" && unloaded == S_FALSE) {
+      std::fputs("Windows retained the rejected composition sink; compare with "
+                 "the independent control.\n",
+                 stderr);
+      result = 2;
+    } else {
+      require(unloaded == S_OK, "COM objects remain after input-thread exit");
+      if (mode == "--rejection-control" && refusalProbeAlive)
+        result = 2;
+    }
+    if (!result)
+      std::puts("TSF input and COM lifetime checks passed.");
+    if (unloaded == S_OK)
+      FreeLibrary(dll);
     return result;
   } catch (const std::exception &error) {
-    if (dll)
-      FreeLibrary(dll);
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
   }

@@ -30,8 +30,11 @@ std::atomic<long> objects = 0;
 std::atomic<long> locks = 0;
 void traceCount(const char *operation, long count,
                 const char *kind = "objects") {
-  wchar_t enabled[2];
-  if (GetEnvironmentVariableW(L"TGSKK_DEBUG", enabled, 2))
+  static const bool enabled = [] {
+    wchar_t value[2];
+    return GetEnvironmentVariableW(L"TGSKK_DEBUG", value, 2) != 0;
+  }();
+  if (enabled)
     std::fprintf(stderr, "tgskk: %s %s=%ld\n", operation, kind, count);
 }
 HRESULT reportFailure(const char *stage, HRESULT result) {
@@ -889,15 +892,7 @@ public:
       HRESULT hr = context->QueryInterface(IID_ITfContextComposition,
                                            reinterpret_cast<void **>(&owner));
       if (SUCCEEDED(hr)) {
-        traceCount("before StartComposition", refs.load(), "references");
         hr = owner->StartComposition(cookie, range, this, &composition);
-        traceCount("after StartComposition", refs.load(), "references");
-        if (FAILED(hr) || !composition) {
-          wchar_t enabled[2];
-          if (GetEnvironmentVariableW(L"TGSKK_DEBUG", enabled, 2))
-            std::fprintf(stderr, "StartComposition result=%08lx output=%p\n",
-                         hr, composition);
-        }
         release(owner);
       }
       if (FAILED(hr) || !composition) {

@@ -65,5 +65,14 @@ the installed input language so a Japanese language pack is not required on the
 test runner. Run it in a disposable Windows environment. Its second argument is
 an EUC-JP test dictionary; the workflow shows how to prepare this fixture.
 
+On the Windows 2025 runner, rejecting a composition retains a TSF notification
+reference even in an independent API-only control. This also retains the document
+context. Rejection leaves the input state and document unchanged, but DLL unloading
+after this path is not guaranteed. The workflow checks normal input with strict
+unload assertions, and tests rejection in a separate process against the control;
+additional retained service references or edit-session objects fail the test.
+The rejection test modes use exit code 2 to distinguish this observed retention
+from a test failure (1) or full release (0).
+
 Automated TSF tests do not establish compatibility with individual applications.
 Interactive Windows 11 application testing is required before regular use.

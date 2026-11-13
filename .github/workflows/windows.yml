@@ -76,16 +76,32 @@ jobs:
           [System.Text.Encoding]::RegisterProvider([System.Text.CodePagesEncodingProvider]::Instance)
           $encoding = [System.Text.Encoding]::GetEncoding(51932)
           [System.IO.File]::WriteAllBytes("$pwd/build/windows/SKK-JISYO.L", $encoding.GetBytes($text))
-          & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/test-tsf-baseline.dll" "$pwd/build/windows/SKK-JISYO.L" --activation-only
-          Write-Host "Minimal text-service control exit code: $LASTEXITCODE"
-          & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/test-tsf-baseline.dll" "$pwd/build/windows/SKK-JISYO.L" --control-refusal
-          Write-Host "Standalone system refusal control exit code: $LASTEXITCODE"
-          & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/test-tsf-baseline.dll" "$pwd/build/windows/SKK-JISYO.L" --control-refusal-no-sink
-          Write-Host "Standalone system refusal without sink exit code: $LASTEXITCODE"
-          foreach ($through in @('--only-refusal', '--skip-refusal')) {
-            Write-Host "Production lifecycle through checkpoint $through"
-            & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/tgskk-tip.dll" "$pwd/build/windows/SKK-JISYO.L" $through
-            Write-Host "Checkpoint $through exit code: $LASTEXITCODE"
-          }
-          & ./build/windows/Release/test-windows-tsf.exe "$pwd/build/windows/Release/tgskk-tip.dll" "$pwd/build/windows/SKK-JISYO.L"
+          $test = "$pwd/build/windows/Release/test-windows-tsf.exe"
+          $dll = "$pwd/build/windows/Release/tgskk-tip.dll"
+          $dictionary = "$pwd/build/windows/SKK-JISYO.L"
+          & $test $dll $dictionary
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $control = @(& $test $dll $dictionary --rejection-control 2>&1)
+          $controlCode = $LASTEXITCODE
+          $control | ForEach-Object { Write-Host $_ }
+          if ($controlCode -notin @(0, 2)) { throw "Rejection control failed: $controlCode" }
+          $rejection = @(& $test $dll $dictionary --rejection 2>&1)
+          $rejectionCode = $LASTEXITCODE
+          $rejection | ForEach-Object { Write-Host $_ }
+          if ($rejectionCode -ne $controlCode) { throw "Rejection lifetime differs from the API control" }
+          if ($rejectionCode -eq 2) {
+            $log = $rejection -join "`n"
+            foreach ($kind in @('factory', 'edit', 'cleanup', 'service')) {
+              $created = [regex]::Matches($log, "tgskk: $kind created objects=").Count
+              $destroyed = [regex]::Matches($log, "tgskk: $kind destroyed objects=").Count
+              $expected = if ($kind -eq 'service') { 1 } else { 0 }
+              if ($created - $destroyed -ne $expected) { throw "Unexpected retained $kind objects" }
+            }
+            $references = [regex]::Matches($log, 'tgskk: service released references=(\d+)')
+            $objects = [regex]::Matches($log, 'tgskk: unload pending objects=(\d+)')
+            if (!$references.Count -or $references[-1].Groups[1].Value -ne '1' -or
+                !$objects.Count -or $objects[-1].Groups[1].Value -ne '1') {
+              throw "Rejection retained more than the observed single service reference"
+            }
+          }
+          exit 0
