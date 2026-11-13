@@ -1,0 +1,15 @@
+[package]
+name = "tgskk-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cskk = { path = "../../third_party/cskk/cskk" }
+
+[dev-dependencies]
+tempfile = "3.3"
+
+[[bench]]
+name = "lookup"
+harness = false

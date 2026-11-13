@@ -1,0 +1,160 @@
+use std::sync::Arc;
+
+use cskk::CskkContext;
+
+pub use cskk::{dictionary::CskkDictionary, error::CskkError};
+
+pub use cskk::conversion::{
+    ConversionCandidate, ConversionError, ConversionProvider, ConversionRequest,
+    ConversionResponse, LearningPolicy,
+};
+pub use cskk::keyevent::CskkKeyEvent;
+pub use cskk::skk_modes::{CompositionMode, InputMode};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModeChange {
+    pub from: InputMode,
+    pub to: InputMode,
+}
+
+impl ModeChange {
+    pub fn label(&self) -> &'static str {
+        mode_label(self.to)
+    }
+}
+
+fn mode_label(mode: InputMode) -> &'static str {
+    match mode {
+        InputMode::Hiragana => "あ",
+        InputMode::Katakana => "ア",
+        InputMode::HankakuKatakana => "ｱ",
+        InputMode::Zenkaku => "Ａ",
+        InputMode::Ascii => "A",
+    }
+}
+
+#[derive(Debug)]
+pub struct InputOutcome {
+    pub consumed: bool,
+    pub committed: String,
+    pub preedit: String,
+    pub mode_change: Option<ModeChange>,
+    pub conversion_error: Option<ConversionError>,
+}
+
+pub struct InputSession {
+    context: CskkContext,
+}
+
+impl InputSession {
+    #[allow(
+        clippy::arc_with_non_send_sync,
+        reason = "CSKK requires Arc dictionaries; the session remains on the input thread"
+    )]
+    pub fn open(dictionary_path: &str, encoding: &str) -> Result<Self, CskkError> {
+        let dictionary = CskkDictionary::new_static_dict(dictionary_path, encoding, true)?;
+        Self::with_dictionaries(vec![Arc::new(dictionary)])
+    }
+
+    pub fn with_dictionaries(dictionaries: Vec<Arc<CskkDictionary>>) -> Result<Self, CskkError> {
+        Ok(Self {
+            context: CskkContext::new_with_bundled_rule(dictionaries)?,
+        })
+    }
+
+    pub fn set_conversion_provider(&mut self, provider: Option<Box<dyn ConversionProvider>>) {
+        self.context.set_conversion_provider(provider);
+    }
+
+    pub fn preview_conversion(&self) -> Option<ConversionRequest> {
+        self.context.preview_conversion()
+    }
+
+    pub fn preview_conversion_limited(&self, limit: usize) -> Option<ConversionRequest> {
+        self.context.preview_conversion_limited(limit)
+    }
+
+    pub fn process_key(&mut self, event: &CskkKeyEvent) -> InputOutcome {
+        let before = self.context.get_current_input_mode();
+        let consumed = self.context.process_key_event(event);
+        self.outcome(before, consumed)
+    }
+
+    pub fn confirm_candidate(&mut self, index: usize) -> InputOutcome {
+        let before = self.context.get_current_input_mode();
+        let consumed = self.is_selecting()
+            && cskk::skk_context_confirm_candidate_at_rs(&mut self.context, index);
+        self.outcome(before, consumed)
+    }
+
+    pub fn select_candidate(&mut self, index: usize) -> InputOutcome {
+        let before = self.context.get_current_input_mode();
+        let consumed = self.is_selecting()
+            && index < cskk::skk_context_get_current_candidate_count_rs(&self.context)
+            && i32::try_from(index).is_ok_and(|index| {
+                cskk::skk_context_select_candidate_at_rs(&mut self.context, index)
+            });
+        self.outcome(before, consumed)
+    }
+
+    fn outcome(&mut self, before: InputMode, consumed: bool) -> InputOutcome {
+        let mode_change = self.mode_change_from(before);
+        InputOutcome {
+            consumed,
+            committed: self.context.poll_output().unwrap_or_default(),
+            preedit: self.context.get_preedit().unwrap_or_default(),
+            mode_change,
+            conversion_error: self.context.take_conversion_error(),
+        }
+    }
+
+    pub fn composition_mode(&self) -> CompositionMode {
+        self.context.get_current_composition_mode()
+    }
+
+    pub fn input_mode(&self) -> InputMode {
+        self.context.get_current_input_mode()
+    }
+
+    pub fn mode_label(&self) -> &'static str {
+        mode_label(self.input_mode())
+    }
+
+    fn is_selecting(&self) -> bool {
+        matches!(
+            self.composition_mode(),
+            CompositionMode::CompositionSelection | CompositionMode::Completion
+        )
+    }
+
+    pub fn candidate_cursor(&self) -> Option<usize> {
+        self.is_selecting()
+            .then(|| cskk::skk_context_get_current_candidate_cursor_position_rs(&self.context).ok())
+            .flatten()
+    }
+
+    pub fn candidates(&self) -> Vec<ConversionCandidate> {
+        cskk::skk_context_get_current_candidates_rs(&self.context)
+            .iter()
+            .map(|candidate| ConversionCandidate {
+                text: candidate.text().to_owned(),
+                annotation: candidate.annotation().map(str::to_owned),
+            })
+            .collect()
+    }
+
+    fn mode_change_from(&self, before: InputMode) -> Option<ModeChange> {
+        let after = self.context.get_current_input_mode();
+        (before != after).then_some(ModeChange {
+            from: before,
+            to: after,
+        })
+    }
+
+    #[must_use = "update the frontend mode indicator if reset restores another input mode"]
+    pub fn reset(&mut self) -> Option<ModeChange> {
+        let before = self.context.get_current_input_mode();
+        cskk::skk_context_reset_rs(&mut self.context);
+        self.mode_change_from(before)
+    }
+}

@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/tgskk-core", "crates/tgskk-cli", "crates/tgskk-ffi", "crates/tgskk-zenz"]
+exclude = ["third_party/cskk"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

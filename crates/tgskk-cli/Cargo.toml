@@ -1,0 +1,12 @@
+[package]
+name = "tgskk-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tgskk"
+path = "src/main.rs"
+
+[dependencies]
+tgskk-core = { path = "../tgskk-core" }
