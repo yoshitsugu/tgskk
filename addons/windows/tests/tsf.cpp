@@ -704,6 +704,17 @@ int run(int argc, char **argv) {
   keys->Release();
   require(SUCCEEDED(manager->SetFocus(emptyDocument)), "final focus loss");
   pump();
+  ITfInputProcessorProfileMgr *profileManager = nullptr;
+  require(SUCCEEDED(profiles->QueryInterface(
+              IID_ITfInputProcessorProfileMgr,
+              reinterpret_cast<void **>(&profileManager))),
+          "profile manager");
+  require(SUCCEEDED(profileManager->DeactivateProfile(
+              TF_PROFILETYPE_INPUTPROCESSOR, language, serviceId, profileId,
+              nullptr, TF_IPPMF_FORPROCESS)),
+          "profile deactivation");
+  profileManager->Release();
+  pump();
   profiles->Release();
   ITfDocumentMgr *replaced = nullptr;
   require(
@@ -726,6 +737,7 @@ int run(int argc, char **argv) {
   require(unregistration() == S_OK, "repeated TSF unregistration");
   cleanup.active = false;
   pump();
+  CoFreeUnusedLibrariesEx(0, 0);
   CoUninitialize();
   require(unload() == S_OK, "COM objects leaked");
   FreeLibrary(dll);

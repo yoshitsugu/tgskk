@@ -27,6 +27,11 @@ const GUID profileId = {0x70c846ab,
 HMODULE module;
 std::atomic<long> objects = 0;
 std::atomic<long> locks = 0;
+void traceObject(const char *operation, long count) {
+  wchar_t enabled[2];
+  if (GetEnvironmentVariableW(L"TGSKK_DEBUG", enabled, 2))
+    std::fprintf(stderr, "tgskk: %s objects=%ld\n", operation, count);
+}
 HRESULT reportFailure(const char *stage, HRESULT result) {
   char message[160];
   std::snprintf(message, sizeof(message), "tgskk: %s failed (%08lx)\n", stage,
@@ -130,11 +135,11 @@ public:
       : composition(value), life(std::move(token)) {
     life->erase &= clear;
     composition->AddRef();
-    ++objects;
+    traceObject("cleanup created", ++objects);
   }
   ~Cleanup() {
     composition->Release();
-    --objects;
+    traceObject("cleanup destroyed", --objects);
   }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
     if (!out)
@@ -448,10 +453,10 @@ class Service final : public ITfTextInputProcessorEx,
   }
 
 public:
-  Service() { ++objects; }
+  Service() { traceObject("service created", ++objects); }
   ~Service() {
     Deactivate();
-    --objects;
+    traceObject("service destroyed", --objects);
   }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **out) override {
     if (!out)
@@ -1015,8 +1020,8 @@ class Factory final : public IClassFactory {
   std::atomic<ULONG> refs{1};
 
 public:
-  Factory() { ++objects; }
-  ~Factory() { --objects; }
+  Factory() { traceObject("factory created", ++objects); }
+  ~Factory() { traceObject("factory destroyed", --objects); }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **out) override {
     if (!out)
       return E_POINTER;
@@ -1113,6 +1118,8 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
   return TRUE;
 }
 extern "C" HRESULT __stdcall DllCanUnloadNow() {
+  if (objects != 0)
+    traceObject("unload pending", objects.load());
   return objects == 0 && locks == 0 ? S_OK : S_FALSE;
 }
 extern "C" HRESULT __stdcall DllGetClassObject(REFCLSID id, REFIID iid,
