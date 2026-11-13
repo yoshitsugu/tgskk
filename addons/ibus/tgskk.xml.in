@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component>
+  <name>org.freedesktop.IBus.Tgskk</name>
+  <description>SKK with local context ranking</description>
+  <exec>@CMAKE_INSTALL_FULL_LIBEXECDIR@/ibus-engine-tgskk --ibus</exec>
+  <version>@PROJECT_VERSION@</version>
+  <author>yoshitsugu</author>
+  <license>GPL-3.0-or-later</license>
+  <homepage>https://github.com/yoshitsugu/tgskk</homepage>
+  <engines><engine>
+    <name>tgskk</name><longname>tgskk</longname><language>ja</language>
+    <license>GPL-3.0-or-later</license><author>yoshitsugu</author>
+    <layout>default</layout><symbol>あ</symbol>
+    <description>SKK with local context ranking</description>
+  </engine></engines>
+</component>

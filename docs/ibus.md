@@ -1,0 +1,64 @@
+# IBusで使う
+
+IBus版はfcitx5版と同じ変換コアを使います。
+最初の4候補はインライン、5候補目から候補一覧を表示します。
+設定・ユーザー辞書はfcitx5版と別に管理します。
+
+## ソースからビルドして導入
+
+Rust 1.88以降、C++20、CMake、Ninja、pkg-config、libxkbcommon、IBus 1.5.26以降とGLibの開発ファイル、D-Busが必要です。
+Debian/Ubuntuの開発パッケージは`libibus-1.0-dev libxkbcommon-dev libglib2.0-dev dbus`、Archは`ibus libxkbcommon glib2 dbus`です。
+SKK辞書（`skkdic`または`skk-jisyo`）も用意してください。
+
+```sh
+bash scripts/check-ibus.sh
+sudo cmake --install build/ibus
+```
+
+文脈補助を使う場合は推論workerも用意します。
+
+```sh
+python3 scripts/setup-zenz.py --no-model
+sudo cmake --install build/zenz
+tgskk-setup-model
+```
+
+モデルはfcitx5版と共通の`~/.local/share/fcitx5/tgskk/`から探し、なければ`/usr/share/tgskk/`を使います。
+モデルの場所を変える場合は、下記の`ZenzModel`で指定します。
+
+IBusを利用するデスクトップセッションへログインし直し、GNOME設定の入力ソースで日本語の「tgskk」を追加します。
+既にIBusを使っている場合は`ibus restart`でも再読み込みできます。
+入力フレームワークの切り替えにはログアウトが必要になる場合があります。
+fcitx5とIBusを同じ入力欄で同時に使用しないでください。
+
+## 設定
+
+`~/.config/tgskk/ibus.conf`に次の形式で設定します。
+変更はIBusの再起動後に反映します。
+`XDG_CONFIG_HOME`、`XDG_DATA_HOME`による保存先の変更にも対応します。
+
+```ini
+[General]
+Dictionary=/usr/share/skk/SKK-JISYO.L
+DictionaryEncoding=euc-jp
+InlineCandidates=4
+ModeIndicator=true
+ZenzEnabled=true
+SkkservMode=Google
+SkkservHost=127.0.0.1
+SkkservPort=1178
+SkkservEncoding=euc-jp
+SkkservTimeoutMs=300
+```
+
+`SkkservMode=Disabled`で外部通信を無効にし、`Custom`で独自serverを指定できます。
+Googleにはローカル候補がない読みだけを送信し、周辺文脈は送りません。
+`ZenzModel`でモデルの絶対パス、`UserDictionary`でユーザー辞書のパスを指定できます。
+既定のユーザー辞書は`~/.local/share/ibus/tgskk/SKK-JISYO.user`です。
+確定後の保存は入力処理とは別のタイマーで実行し、正常終了時にも保存します。
+
+操作は[利用ガイド](usage.md)と共通です。
+候補一覧は7件ごとに表示し、数字・クリックで確定できます。
+モードはIBusのプロパティと一時的な補助表示で通知します。
+表示位置や見た目はGNOME ShellなどのIBusパネルに従います。
+実アプリごとの候補窓・周辺文字列の提供状況は、D-Bus結合テストとは別に確認が必要です。

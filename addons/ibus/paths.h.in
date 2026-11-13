@@ -1,0 +1,3 @@
+#define TGSKK_WORKER "@TGSKK_ZENZ_WORKER@"
+#define TGSKK_GOOGLE "@CMAKE_INSTALL_FULL_LIBEXECDIR@/tgskk-google-skkserv"
+#define TGSKK_SYSTEM_MODEL "@CMAKE_INSTALL_FULL_DATADIR@/tgskk/zenz-v3.2-small-Q5_K_M.gguf"

@@ -9,7 +9,7 @@
 
 geditでの実動作を録画しています。クリックでMP4を開きます。
 
-入力エンジンは[CSKK](https://github.com/naokiri/cskk)、デスクトップとの接続はfcitx5を使います。
+入力エンジンは[CSKK](https://github.com/naokiri/cskk)、デスクトップとの接続はfcitx5またはIBusを使います。
 現状はLinuxのみ対応しています。
 標準ルールは同梱しており、libcskkの別途インストールは不要です。
 ローカル辞書に候補がない読みは、同梱の[Google IME SKK server](https://github.com/yoshitsugu/google-ime-skkserv-rs)で補います。
@@ -19,6 +19,9 @@ geditでの実動作を録画しています。クリックでMP4を開きます
 
 Arch Linux用PKGBUILDと、Debian 13、Ubuntu 24.04／26.04 LTS向け`.deb`の作成手順は[配布パッケージ](docs/distribution.md)を参照してください。
 パッケージには推論用プログラムも含み、モデルは`tgskk-setup-model`で取得できます。
+
+IBus版をソースからビルドする場合は[IBusガイド](docs/ibus.md)を参照してください。
+以下はfcitx5版の手順です。
 
 ソースからビルドする場合は、Rust 1.88以降、C/C++20対応コンパイラー、CMake、libxkbcommonとfcitx5 5.1.7以降の開発ファイルが必要です。
 SKK辞書も用意してください。既定では`/usr/share/skk/SKK-JISYO.L`（EUC-JP）を読みます。
