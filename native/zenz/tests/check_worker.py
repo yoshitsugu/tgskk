@@ -81,6 +81,38 @@ class Worker:
 
 
 class NativeWorkerTests(unittest.TestCase):
+    def test_scores_match_pinned_serial_reference(self):
+        # Rare kanji make a 40-character context consume many model tokens.
+        rare = ('𠮷𩸽𠀋𡈽𡌛𡑮𡢽𠮟𡚴𡸴𣇄𣗄𣜿𣝣𣳾𤟱𥒎𥔎𥝱𥧄'
+                '𥶡𦫿𦹀𧃴𧚄𨉷𨏍𪆐𠂉𠂢𠂤𠆢𠈓𠌫𠎁𠍱𠏹𠑊𠔉')
+        rare = (rare * 2)[:40]
+        cases = [
+            ('駅で', 'キシャ', ['記者', '汽車'], [-2.5865285336484294, -0.2760772154230728]),
+            ('新聞の', 'キシャ', ['記者', '汽車'], [-0.0005491340728444249, -8.84067115625013]),
+            (rare, 'キシャ' + 'ア' * 61, [rare[:23], '記者'], [-397.45471864680763, -3.1781633930180933]),
+            ('あ' * 240, 'キシャ', ['漢' * 96, '汽車'], [-473.0221857021271, -3.096456488005224]),
+        ]
+        for context, reading, candidates, expected in cases:
+            with self.subTest(context=context, reading=reading), Worker() as worker:
+                actual = worker.score(context, reading, candidates)
+                self.assertIsNotNone(actual)
+                for got, reference in zip(actual, expected, strict=True):
+                    # Serial references use the pinned model; allow libm/compiler rounding.
+                    self.assertAlmostEqual(got, reference, delta=1e-6)
+
+    def test_prompt_token_boundary_and_rejection_recovery(self):
+        # With the pinned tokenizer these prompts have 252 and 253 tokens.
+        context = 'あ' * 240
+        candidates = ['漢' * 96, '汽車']
+        with Worker() as worker:
+            expected = worker.score(context, 'キシャ', candidates)
+            self.assertIsNotNone(expected)
+            single = [worker.score(context, 'キシャ', [candidate])[0]
+                      for candidate in candidates]
+            self.assertEqual(expected, single)
+            self.assertIsNone(worker.score(context + 'あ', 'キシャ', candidates))
+            self.assertEqual(worker.score(context, 'キシャ', candidates), expected)
+
     def test_context_changes_first_candidate(self):
         candidates = ['記者', '汽車', '帰社', '貴社']
         with Worker() as worker:
@@ -91,10 +123,41 @@ class NativeWorkerTests(unittest.TestCase):
     def test_rejected_request_does_not_kill_worker(self):
         with Worker() as worker:
             pid = worker.process.pid
-            self.assertIsNone(worker.score('駅で', 'キシャ', ['']))
-            self.assertEqual(len(worker.score('駅で', 'キシャ', ['汽車'])), 1)
-            self.assertEqual(worker.process.pid, pid)
-            self.assertIsNone(worker.process.poll())
+            expected = worker.score('駅で', 'キシャ', ['汽車', '記者'])
+            for rejected in [[''], ['汽車', '記者', '漢' * 97]]:
+                with self.subTest(rejected_length=len(rejected[-1])):
+                    self.assertIsNone(worker.score('別の文脈', 'キシャ', rejected))
+                    self.assertEqual(worker.score('駅で', 'キシャ', ['汽車', '記者']), expected)
+                    self.assertEqual(worker.process.pid, pid)
+                    self.assertIsNone(worker.process.poll())
+
+    def test_batched_scores_equal_single_candidate_requests(self):
+        cases = [
+            ('キシャ', ['汽車'] * 8),
+            ('キシャ', ['記者', '汽車', '帰社', '貴社', '騎射', '喜捨', '稀釈', '汽車']),
+            ('コウエン', ['公園', '講演', '公演', '後援', '口演', '高遠', '広縁', '紅炎']),
+            ('カンジ', ['漢字', '感じ', '幹事', '監事', '完治', '官事', '莞爾', '漢字']),
+            ('カガク', ['科学', '化学', '価額', '火学', '下学', '花萼', '科学', '化学']),
+            ('タイショウ', ['対象', '対照', '大賞', '大将', '対称', '大正', '隊商', '退将']),
+            ('キシャ', ['気', '木', '汽車', '記者', '国際連合安全保障理事会', '機', '帰社', '貴社']),
+            ('コクサイ', ['国際連合安全保障理事会', '情報処理推進機構', '地方自治体',
+                       '東京都千代田区', '全国高等学校野球選手権大会', '国際宇宙ステーション',
+                       '公共交通機関', '学術研究機関']),
+            ('シンブン', ['社', '本', '紙', '新聞', '記者', '記事', '取材', '出版社']),
+            ('キシャ', ['汽', '記', '帰', '貴', '社', '車', '者', '機']),
+        ]
+        contexts = ['', '駅で', '新聞を読んでいるときの文章です',
+                    ('ここでは直前までの文章を文脈として候補の採点に使います。' * 2)[-40:]]
+        with Worker() as worker:
+            for context in contexts:
+                for reading, candidates in cases:
+                    with self.subTest(context=context, reading=reading, candidates=candidates):
+                        together = worker.score(context, reading, candidates)
+                        single = [worker.score(context, reading, [candidate])[0]
+                                  for candidate in candidates]
+                        self.assertEqual(together, single)
+                        self.assertEqual(worker.score(context, reading, candidates), single)
+                        self.assertEqual(worker.score(context, reading, candidates[::-1]), single[::-1])
 
     def test_warmup_and_eight_candidates(self):
         with Worker() as worker:
@@ -105,6 +168,17 @@ class NativeWorkerTests(unittest.TestCase):
             with self.assertRaises(EOFError):
                 worker.score('駅で', 'キシャ', ['汽車'] * 9)
             self.assertEqual(worker.process.wait(timeout=5), 1)
+
+    def test_long_candidates_leave_the_shared_prefix_usable(self):
+        with Worker() as worker:
+            short = ['記者', '汽車']
+            expected = worker.score('駅で', 'キシャ', short)
+            candidates = ['漢' * 96, '𠮷' * 24]
+            together = worker.score('駅で', 'キシャ', candidates)
+            single = [worker.score('駅で', 'キシャ', [candidate])[0]
+                      for candidate in candidates]
+            self.assertEqual(together, single)
+            self.assertEqual(worker.score('駅で', 'キシャ', short), expected)
 
     def test_neither_cwd_nor_backend_path_loads_plugins(self):
         for location in ['cwd', 'environment']:

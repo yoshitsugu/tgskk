@@ -16,6 +16,15 @@
 namespace {
 constexpr uint32_t maxString = 1024;
 constexpr uint32_t maxCandidates = 8;
+// Measured with GGML_NATIVE=OFF/AVX2: combining 8+ tokens changes scores.
+// Keep each candidate intact to preserve serial scoring for longer candidates.
+#if defined(__x86_64__) || defined(_M_X64)
+constexpr size_t maxCandidateBatchTokens = 7;
+#else
+constexpr size_t maxCandidateBatchTokens = 1;
+#endif
+// Longer prompts change scores through the unified KV path. Normal SKK input fits below this bound.
+constexpr size_t maxPromptTokens = 252;
 // Increment the protocol version whenever request/response framing changes.
 constexpr uint32_t protocolMagic = 0x325A4754; // TGZ2, little-endian.
 constexpr uint32_t rejectedRequest = UINT32_MAX;
@@ -123,6 +132,8 @@ public:
         cp.n_ubatch = 512;
         cp.n_threads = threads;
         cp.n_threads_batch = threads;
+        cp.n_seq_max = maxCandidates + 1;
+        cp.kv_unified = true;
         cp.no_perf = true;
         context_.reset(llama_init_from_model(model_.get(), cp));
         if (!context_) throw std::runtime_error("context");
@@ -135,28 +146,59 @@ public:
     }
     std::vector<double> score(const std::string &left, const std::string &reading,
                               const std::vector<std::string> &candidates) {
+        std::vector<std::vector<llama_token>> tails;
+        for (const auto &candidate : candidates) {
+            tails.push_back(tokenize(vocab_, preprocess(candidate), false));
+            if (tails.back().empty() || tails.back().size() > 96)
+                throw InvalidInput("candidate size");
+        }
         std::string prompt;
         if (!left.empty()) prompt = "\xee\xb8\x82" + preprocess(left);
         prompt += "\xee\xb8\x80" + preprocess(reading);
         if (!candidates.empty()) prompt += "\xee\xb8\x81";
         const auto tokens = tokenize(vocab_, prompt, true);
-        if (tokens.empty() || tokens.size() > 384) throw InvalidInput("prompt size");
+        if (tokens.empty() || tokens.size() > maxPromptTokens) throw InvalidInput("prompt size");
         prepare(tokens);
         std::vector<double> scores;
-        for (const auto &candidate : candidates) {
-            // Zenz evaluates candidate tokens without EOS; ending probability
-            // would incorrectly penalize words that normally continue a sentence.
-            const auto tail = tokenize(vocab_, preprocess(candidate), false);
-            if (tail.empty() || tail.size() > 96) throw InvalidInput("candidate size");
-            double result = logProbability(next_.data(), next_.size(), tail[0]);
-            if (tail.size() > 1) {
-                decode({tail.begin(), tail.end() - 1}, prefix_.size(), true);
-                for (size_t i = 1; i < tail.size(); ++i)
-                    result += logProbability(llama_get_logits_ith(context_.get(), i - 1), next_.size(), tail[i]);
-                if (!llama_memory_seq_rm(llama_get_memory(context_.get()), 0, prefix_.size(), -1))
-                    throw std::runtime_error("trim candidate");
+        // EOS would penalize words that normally continue a sentence.
+        for (const auto &tail : tails)
+            scores.push_back(logProbability(next_.data(), next_.size(), tail[0]));
+        auto *memory = llama_get_memory(context_.get());
+        for (size_t begin = 0; begin < tails.size();) {
+            size_t end = begin, rows = 0;
+            while (end < tails.size()) {
+                const size_t need = tails[end].size() - 1;
+                if (rows > 0 && rows + need > maxCandidateBatchTokens) break;
+                rows += need;
+                ++end;
             }
-            scores.push_back(result);
+            if (rows > 0) {
+                auto batch = llama_batch_init(rows, 0, 1);
+                std::vector<size_t> first(tails.size());
+                for (size_t k = begin; k < end; ++k) {
+                    first[k] = batch.n_tokens;
+                    if (tails[k].size() < 2) continue;
+                    llama_memory_seq_cp(memory, 0, k + 1, -1, -1);
+                    for (size_t i = 0; i + 1 < tails[k].size(); ++i) {
+                        const int n = batch.n_tokens++;
+                        batch.token[n] = tails[k][i];
+                        batch.pos[n] = prefix_.size() + i;
+                        batch.n_seq_id[n] = 1;
+                        batch.seq_id[n][0] = k + 1;
+                        batch.logits[n] = true;
+                    }
+                }
+                const int result = llama_decode(context_.get(), batch);
+                llama_batch_free(batch);
+                if (result) throw std::runtime_error("decode");
+                for (size_t k = begin; k < end; ++k) {
+                    for (size_t i = 1; i < tails[k].size(); ++i)
+                        scores[k] += logProbability(llama_get_logits_ith(context_.get(), first[k] + i - 1), next_.size(), tails[k][i]);
+                    if (tails[k].size() > 1 && !llama_memory_seq_rm(memory, k + 1, -1, -1))
+                        throw std::runtime_error("trim candidate");
+                }
+            }
+            begin = end;
         }
         return scores;
     }
