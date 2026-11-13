@@ -1,0 +1,71 @@
+# tgskk
+
+ローカルAIを用いた変換候補順位入れ替え機能付きのSKKです。
+
+[Zenz](https://huggingface.co/Miwa-Keita/zenz-v3.2-small-gguf)が文脈に合う辞書候補を優先します。
+入力中に採点して並び変えを行い、変換候補を出すときに間に合わなければ打ち切るので、ほぼ待つことはありません。
+
+[![同じ読み「きしゃ」を、文脈に応じて「駅で汽車」「新聞の記者」と変換するデモ](docs/media/demo.gif)](docs/media/demo.mp4)
+
+geditでの実動作を録画しています。クリックでMP4を開きます。
+
+入力エンジンは[CSKK](https://github.com/naokiri/cskk)、デスクトップとの接続はfcitx5を使います。
+現状はLinuxのみ対応しています。
+標準ルールは同梱しており、libcskkの別途インストールは不要です。
+オンライン候補取得には対応していません。
+
+## インストール
+
+Rust toolchain、C/C++20対応コンパイラー、CMake、libxkbcommonとfcitx5 5.1.22以降の開発ファイルが必要です。
+SKK辞書も用意してください。既定では`/usr/share/skk/SKK-JISYO.L`（EUC-JP）を読みます。
+
+```sh
+bash scripts/check-fcitx5.sh
+sudo cmake --install build/fcitx5
+```
+
+文脈補助を使う場合は、Python 3.12以降でモデルと推論用プログラムも準備します。
+セットアップ時にZenzモデル（約74 MB）とllama.cppを取得し、推論用プログラムをビルドします。入力中の推論はローカルで完結します。
+
+```sh
+python3 scripts/setup-zenz.py
+sudo cmake --install build/zenz
+```
+
+fcitx5を再起動し、設定画面で「tgskk」を入力メソッドに追加してください。
+モデルを使わない場合も辞書順で入力できます。文脈補助は`ZenzEnabled`で無効にできます。
+
+## 操作
+
+Shiftを押しながら読みの入力を始め、Spaceで変換します。
+最初の4候補は入力位置で順に切り替わり、5候補目から一覧を表示します。
+
+| 場面 | キー | 動作 |
+| --- | --- | --- |
+| 一覧を出す前 | `Space` / `x` | 次 / 前の候補 |
+| 一覧表示中 | `Space` / `x`、`Page_Down` / `Page_Up` | 次 / 前のページ |
+| 候補選択中 | 上下キー | 候補を移動 |
+| 候補選択中 | `Return` | 確定 |
+| 一覧表示中 | `1`〜`7`、クリック | 候補を選んで確定 |
+| 入力・変換中 | `C-g` | キャンセル |
+
+`InlineCandidates`で一覧を出す前の候補数を変更できます。既定は4、3ならfcitx5-cskkと同じタイミング、0なら最初から一覧を表示します。
+AIが実際に順位を変えた場合は、一覧の補助行に *AI-ranked* と表示します。表示後の候補順は変わりません。
+
+辞書・文脈補助の設定、復旧手順、CLIの使い方は[利用ガイド](docs/usage.md)を参照してください。
+
+## 開発
+
+```sh
+bash scripts/check.sh
+bash scripts/check-fcitx5.sh
+```
+
+実モデルを用意した環境では`bash scripts/check-zenz.sh`で結合テストと採点・入力処理の測定を実行できます。
+
+- [設計](docs/architecture.md)
+- [CSKKの取り込み情報](third_party/cskk/UPSTREAM.md)
+
+## ライセンス
+
+[GPL-3.0-or-later](LICENSE)。CSKKの著作権情報は[LICENSE.txt](third_party/cskk/LICENSE.txt)と[README](third_party/cskk/README.md)、モデルと推論runtimeの出典・ライセンスは[NOTICE](native/zenz/NOTICE.md)に記載しています。
