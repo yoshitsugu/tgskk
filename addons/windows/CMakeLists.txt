@@ -23,6 +23,7 @@ set_target_properties(tgskk-tip PROPERTIES PREFIX "")
 add_executable(test-windows-core tests/core.cpp)
 target_link_libraries(test-windows-core PRIVATE tgskk-core ${TGSKK_WINDOWS_LIBRARIES})
 enable_testing()
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../common" common)
 add_test(NAME windows-core COMMAND test-windows-core "${TGSKK_ROOT}/examples/SKK-JISYO.demo.utf8")
 
 add_executable(test-windows-tsf tests/tsf.cpp inputscope_guids.cpp)

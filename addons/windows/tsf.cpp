@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "../common/candidates.h"
 #include "tgskk.h"
 #include "tsf_compat.h"
 #include <algorithm>
@@ -318,41 +319,32 @@ class Service final : public ITfTextInputProcessorEx,
     const size_t count = view->candidate_count;
     const size_t selected = view->selected;
     const bool list = selected >= inlineCandidates;
-    const size_t page = list ? (selected - inlineCandidates) / pageSize : 0;
     if (symbol == TGSKK_KEY_PAGE_UP || symbol == TGSKK_KEY_PAGE_DOWN ||
         (list && (symbol == ' ' || symbol == 'x'))) {
-      size_t target = selected;
-      if (!list && symbol == TGSKK_KEY_PAGE_DOWN) {
-        target = std::min(inlineCandidates, count - 1);
-      } else if (list && (symbol == ' ' || symbol == TGSKK_KEY_PAGE_DOWN)) {
-        target = inlineCandidates + (page + 1) * pageSize;
-        if (target >= count) {
-          if (symbol == ' ') {
-            if (!tgskk_session_choose(session, count - 1))
-              return nullptr;
-            return tgskk_session_key(session, ' ', 0, 0);
-          }
-          target = selected;
-        }
-      } else if (list) {
-        target = page ? inlineCandidates + (page - 1) * pageSize
-                      : inlineCandidates - 1;
-      }
-      return tgskk_session_choose(session, target);
+      const auto move = tgskk::candidatePageMove(
+          count, selected, inlineCandidates,
+          symbol == ' ' || symbol == TGSKK_KEY_PAGE_DOWN, symbol == ' ');
+      const auto *next = tgskk_session_choose(session, move.index);
+      if (next && move.kind == tgskk::CandidateMoveKind::Register)
+        return tgskk_session_key(session, ' ', 0, 0);
+      if (next && move.kind == tgskk::CandidateMoveKind::ReturnToReading)
+        return tgskk_session_key(session, 'x', 0, 0);
+      return next;
     }
     if (symbol == TGSKK_KEY_UP || symbol == TGSKK_KEY_DOWN)
       return tgskk_session_choose(
-          session, symbol == TGSKK_KEY_DOWN ? std::min(selected + 1, count - 1)
-                                            : (selected ? selected - 1 : 0));
+          session,
+          tgskk::candidateStep(count, selected, symbol == TGSKK_KEY_DOWN));
     if (list && symbol >= '1' && symbol < '1' + pageSize) {
-      const size_t index = inlineCandidates + page * pageSize + symbol - '1';
+      const size_t index =
+          tgskk::candidatePageStart(selected, inlineCandidates) + symbol - '1';
       return index < count ? tgskk_session_select(session, index)
                            : tgskk_session_choose(session, selected);
     }
     return tgskk_session_key(session, symbol, modifiers, 0);
   }
-  static constexpr size_t inlineCandidates = 4;
-  static constexpr size_t pageSize = 7;
+  static constexpr size_t inlineCandidates = tgskk::defaultInlineCandidates;
+  static constexpr size_t pageSize = tgskk::candidatePageSize;
   bool disabled(ITfContext *context) {
     ITfCompartmentMgr *compartments = nullptr;
     bool result = false;
@@ -950,8 +942,7 @@ public:
           view->selected >= inlineCandidates) {
         std::wstring text;
         const size_t start =
-            inlineCandidates +
-            ((view->selected - inlineCandidates) / pageSize) * pageSize;
+            tgskk::candidatePageStart(view->selected, inlineCandidates);
         for (size_t i = start;
              i < view->candidate_count && i < start + pageSize; ++i) {
           text += (i == view->selected ? L"> " : L"  ") +

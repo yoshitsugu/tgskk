@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "tgskk.h"
+#include "../common/candidates.h"
 #include "paths.h"
 #include "tgskk-features.h"
 
@@ -67,7 +68,7 @@ FCITX_CONFIGURATION(
     Option<std::string, EncodingConstrain> encoding{
         this, "Encoding", "Dictionary encoding", "euc-jp"};
     Option<int, IntConstrain> inlineCandidates{
-        this, "InlineCandidates", "Candidates before showing the list", 4,
+        this, "InlineCandidates", "Candidates before showing the list", static_cast<int>(tgskk::defaultInlineCandidates),
         IntConstrain(0)};
     Option<bool> modeIndicator{this, "ModeIndicator",
                                "Show mode near the cursor", true};
@@ -203,7 +204,8 @@ public:
         (event.key().check(Key(FcitxKey_Page_Down)) || event.key().check(Key(FcitxKey_Page_Up)))) {
       // Keep page navigation inside the composition while the list is hidden.
       if (event.key().check(Key(FcitxKey_Page_Down))) {
-        const auto target = std::min(static_cast<size_t>(*config_.inlineCandidates), view->candidate_count - 1);
+        const auto target = tgskk::candidatePageMove(view->candidate_count, view->selected,
+            static_cast<size_t>(*config_.inlineCandidates), true).index;
         render(ic, tgskk_session_choose(session, target));
       }
       event.filterAndAccept();
@@ -211,9 +213,8 @@ public:
     }
     if (view && view->selecting &&
         (event.key().check(Key(FcitxKey_Down)) || event.key().check(Key(FcitxKey_Up)))) {
-      const auto target = event.key().check(Key(FcitxKey_Down))
-          ? std::min(view->selected + 1, view->candidate_count - 1)
-          : (view->selected ? view->selected - 1 : 0);
+      const auto target = tgskk::candidateStep(view->candidate_count, view->selected,
+          event.key().check(Key(FcitxKey_Down)));
       if (target != view->selected) {
         render(ic, tgskk_session_choose(session, target));
       }
@@ -335,26 +336,17 @@ private:
     auto *session = state->session.get();
     const auto page = static_cast<size_t>(list.currentPage());
     const auto pageSize = static_cast<size_t>(list.pageSize());
-    if (forward) {
-      const auto target = state->candidateOffset + (page + 1) * pageSize;
-      if (target < view->candidate_count) {
-        render(ic, tgskk_session_choose(session, target));
-      } else if (registerAtEnd) {
-        // CSKK enters registration only from the last candidate.
-        view = tgskk_session_choose(session, view->candidate_count - 1);
-        if (view) { view = tgskk_session_key(session, FcitxKey_space, 0, 0); }
-        render(ic, view);
-      }
-    } else if (page > 0) {
-      render(ic, tgskk_session_choose(session, state->candidateOffset + (page - 1) * pageSize));
-    } else if (state->candidateOffset > 0) {
-      render(ic, tgskk_session_choose(session, state->candidateOffset - 1));
-    } else {
-      // CSKK returns to the reading only from the first candidate.
-      view = tgskk_session_choose(session, 0);
-      if (view) { view = tgskk_session_key(session, FcitxKey_x, 0, 0); }
-      render(ic, view);
-    }
+    const auto move = tgskk::candidatePageMove(view->candidate_count,
+        state->candidateOffset + page * pageSize, state->candidateOffset,
+        forward, registerAtEnd, pageSize);
+    if (move.kind == tgskk::CandidateMoveKind::Stay)
+      return;
+    view = tgskk_session_choose(session, move.index);
+    if (view && move.kind == tgskk::CandidateMoveKind::Register)
+      view = tgskk_session_key(session, FcitxKey_space, 0, 0);
+    else if (view && move.kind == tgskk::CandidateMoveKind::ReturnToReading)
+      view = tgskk_session_key(session, FcitxKey_x, 0, 0);
+    render(ic, view);
   }
 
   static std::string suffix(const std::string &text) {
