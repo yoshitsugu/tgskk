@@ -28,13 +28,16 @@ const GUID profileId = {0x70c846ab,
 HMODULE module;
 std::atomic<long> objects = 0;
 std::atomic<long> locks = 0;
-void traceCount(const char *operation, long count,
-                const char *kind = "objects") {
+bool debugEnabled() {
   static const bool enabled = [] {
     wchar_t value[2];
     return GetEnvironmentVariableW(L"TGSKK_DEBUG", value, 2) != 0;
   }();
-  if (enabled)
+  return enabled;
+}
+void traceCount(const char *operation, long count,
+                const char *kind = "objects") {
+  if (debugEnabled())
     std::fprintf(stderr, "tgskk: %s %s=%ld\n", operation, kind, count);
 }
 HRESULT reportFailure(const char *stage, HRESULT result) {
@@ -42,10 +45,18 @@ HRESULT reportFailure(const char *stage, HRESULT result) {
   std::snprintf(message, sizeof(message), "tgskk: %s failed (%08lx)\n", stage,
                 static_cast<unsigned long>(result));
   OutputDebugStringA(message);
-  wchar_t enabled[2];
-  if (GetEnvironmentVariableW(L"TGSKK_DEBUG", enabled, 2))
+  if (debugEnabled())
     std::fputs(message, stderr);
   return result;
+}
+void reportCoreFailure(const char *stage, const char *error) {
+  reportFailure(stage, E_FAIL);
+  if (error && *error) {
+    OutputDebugStringA(error);
+    OutputDebugStringA("\n");
+    if (debugEnabled())
+      std::fprintf(stderr, "tgskk: %s\n", error);
+  }
 }
 
 std::wstring wide(const char *text) {
@@ -301,7 +312,10 @@ class Service final : public ITfTextInputProcessorEx,
     current->Release();
     return result;
   }
-  bool enabled = true;
+  bool eligible(uint32_t symbol, uint32_t modifiers) const {
+    return composition || (session && tgskk_session_may_process(session, symbol,
+                                                                modifiers) > 0);
+  }
   static bool modifier(WPARAM key) {
     return key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU ||
            key == VK_LWIN || key == VK_RWIN || key == VK_CAPITAL ||
@@ -515,10 +529,14 @@ public:
       char *error = nullptr;
       runtime =
           tgskk_runtime_new(utf8(path).c_str(), "euc-jp", nullptr, &error);
+      if (!runtime)
+        reportCoreFailure("create runtime", error);
       tgskk_string_free(error);
       if (!runtime)
         return E_FAIL;
       session = tgskk_session_new(runtime, &error);
+      if (!session)
+        reportCoreFailure("create session", error);
       tgskk_string_free(error);
       if (!session) {
         tgskk_runtime_free(runtime);
@@ -629,13 +647,13 @@ public:
     if (modifier(key))
       return S_OK;
     uint32_t symbol, modifiers;
-    if (composition && enabled && session && !disabled(context)) {
+    if (composition && session && !disabled(context)) {
       *eaten = TRUE;
       return S_OK;
     }
-    if (enabled && session && !disabled(context) &&
+    if (session && !disabled(context) &&
         translate(key, scan, symbol, modifiers))
-      *eaten = tgskk_session_may_process(session, symbol, modifiers) > 0;
+      *eaten = eligible(symbol, modifiers);
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext *context, WPARAM key,
@@ -646,7 +664,7 @@ public:
     if (modifier(key))
       return S_OK;
     uint32_t symbol, modifiers;
-    if (!enabled || !session || disabled(context) ||
+    if (!session || disabled(context) ||
         !translate(key, scan, symbol, modifiers)) {
       BOOL ignored = FALSE;
       if (!composition || context != active ||
@@ -654,6 +672,8 @@ public:
         abandon(true);
       return S_OK;
     }
+    if (!eligible(symbol, modifiers))
+      return S_OK;
     if (cancelPending && context != active && !abandon())
       return S_OK;
     if (active != context) {
@@ -996,14 +1016,11 @@ public:
           if (SUCCEEDED(
                   viewport->GetTextExt(cookie, range, &caret, &clipped))) {
             SetWindowTextW(candidates, text.c_str());
-            SetWindowPos(candidates, HWND_TOPMOST, caret.left, caret.bottom,
-                         320,
-                         static_cast<int>((view->candidate_count - start < 7
-                                               ? view->candidate_count - start
-                                               : 7) *
-                                              24 +
-                                          8),
-                         SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            SetWindowPos(
+                candidates, HWND_TOPMOST, caret.left, caret.bottom, 320,
+                static_cast<int>(
+                    std::min(view->candidate_count - start, pageSize) * 24 + 8),
+                SWP_NOACTIVATE | SWP_SHOWWINDOW);
           }
           release(viewport);
         }

@@ -90,7 +90,7 @@ public:
   bool holdAsync = false;
   InputScope scope = IS_DEFAULT;
   bool scopeFailure = false;
-  ULONG endedCompositions = 0;
+  ULONG endedCompositions = 0, startedCompositions = 0;
   HWND window = nullptr;
   ~Store() {
     std::fputs("test store destroyed\n", stderr);
@@ -340,6 +340,7 @@ public:
   }
   HRESULT STDMETHODCALLTYPE OnStartComposition(ITfCompositionView *,
                                                BOOL *allowed) override {
+    ++startedCompositions;
     *allowed = !refuseComposition;
     return S_OK;
   }
@@ -547,6 +548,45 @@ int run(int argc, char **argv) {
   require(
       SUCCEEDED(manager->AssociateFocus(store->window, document, &previous)),
       "associate window focus");
+  require(SUCCEEDED(getFactory(serviceId, IID_IClassFactory,
+                               reinterpret_cast<void **>(&factory))),
+          "direct key test factory");
+  require(
+      SUCCEEDED(factory->CreateInstance(nullptr, IID_ITfTextInputProcessorEx,
+                                        reinterpret_cast<void **>(&service))),
+      "direct key test service");
+  factory->Release();
+  require(SUCCEEDED(service->ActivateEx(manager, id, 0)),
+          "direct key test activation");
+  ITfKeyEventSink *direct = nullptr;
+  require(SUCCEEDED(service->QueryInterface(
+              IID_ITfKeyEventSink, reinterpret_cast<void **>(&direct))),
+          "direct key sink");
+  BYTE controlState[256] = {};
+  controlState[VK_CONTROL] = controlState[VK_LCONTROL] = 0x80;
+  require(SetKeyboardState(controlState), "direct control key state");
+  const LPARAM controlScan = 1 | (MapVirtualKeyW('C', MAPVK_VK_TO_VSC) << 16);
+  BOOL eligible = TRUE, consumed = TRUE;
+  require(
+      SUCCEEDED(direct->OnTestKeyDown(context, 'C', controlScan, &eligible)) &&
+          !eligible,
+      "Ctrl+C was eligible");
+  const auto beforeShortcut = store->startedCompositions;
+  store->refuseComposition = true;
+  require(SUCCEEDED(direct->OnKeyDown(context, 'C', controlScan, &consumed)) &&
+              !consumed,
+          "direct Ctrl+C was consumed");
+  require(store->startedCompositions == beforeShortcut,
+          "unhandled key started a composition");
+  require(store->text.empty(), "unhandled key changed document");
+  store->refuseComposition = false;
+  direct->Release();
+  require(SUCCEEDED(service->Deactivate()), "direct key test deactivation");
+  service->Release();
+  service = nullptr;
+  require(unload() == S_OK, "direct key test retained COM objects");
+  BYTE clearState[256] = {};
+  require(SetKeyboardState(clearState), "restore key state");
   GUID profileId = {0x70c846ab,
                     0x9fb5,
                     0x43cb,

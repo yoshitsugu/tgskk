@@ -17,6 +17,9 @@ tested independently. Elevated applications, AppContainer applications, secure
 desktop, UI-less mode, 32-bit applications and ARM64 are outside this build's
 supported scope.
 New words can be committed, but are not remembered for subsequent conversions.
+ASCII mode currently commits each printable key through a short TSF composition;
+application completion and undo behavior may differ from ordinary keyboard input.
+Fields whose InputScope query fails disable input, as do password/private fields.
 
 ## Build
 
