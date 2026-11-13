@@ -12,16 +12,10 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::io;
 use std::net::ToSocketAddrs;
-#[cfg(unix)]
-use std::os::fd::OwnedFd;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 #[cfg(any(unix, windows))]
 use std::process::Child;
-#[cfg(unix)]
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::thread;
@@ -528,10 +522,7 @@ fn tcp_lookup(
 #[cfg(any(unix, windows))]
 struct GoogleHelper {
     child: Child,
-    #[cfg(unix)]
-    stream: UnixStream,
-    #[cfg(windows)]
-    stream: tgskk_process::Pipe,
+    stream: tgskk_process::Stream,
 }
 
 #[cfg(any(unix, windows))]
@@ -545,21 +536,6 @@ impl Drop for GoogleHelper {
 #[cfg(any(unix, windows))]
 impl GoogleHelper {
     fn start(executable: &Path) -> io::Result<Self> {
-        #[cfg(unix)]
-        let (child, stream) = {
-            let (stream, child_stream) = UnixStream::pair()?;
-            let stdin = Stdio::from(OwnedFd::from(child_stream.try_clone()?));
-            let stdout = Stdio::from(OwnedFd::from(child_stream));
-            let child = Command::new(executable)
-                .arg("--stdio")
-                .arg("--encoding=utf-8")
-                .stdin(stdin)
-                .stdout(stdout)
-                .stderr(Stdio::null())
-                .spawn()?;
-            (child, stream)
-        };
-        #[cfg(windows)]
         let (child, stream) = tgskk_process::spawn(executable, ["--stdio", "--encoding=utf-8"])?;
         Ok(Self { child, stream })
     }

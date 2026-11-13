@@ -10,5 +10,5 @@ tgskk-core = { path = "../tgskk-core" }
 [dev-dependencies]
 tempfile = "3.3"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(unix, windows))'.dependencies]
 tgskk-process = { path = "../tgskk-process" }
