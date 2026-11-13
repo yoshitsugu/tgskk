@@ -46,6 +46,14 @@ fn stalled_reads_and_writes_are_bounded_and_child_is_reaped() {
         };
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(start.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            pipe.write_all(b"next").unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        assert_eq!(
+            pipe.read(&mut [0; 1]).unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
         child.kill().unwrap();
         child.wait().unwrap();
         drop(pipe);

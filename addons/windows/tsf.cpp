@@ -294,12 +294,12 @@ class Service final : public ITfTextInputProcessorEx,
     const size_t selected = view->selected;
     const bool list = selected >= inlineCandidates;
     const size_t page = list ? (selected - inlineCandidates) / pageSize : 0;
-    if (symbol == 0xff55 || symbol == 0xff56 ||
+    if (symbol == TGSKK_KEY_PAGE_UP || symbol == TGSKK_KEY_PAGE_DOWN ||
         (list && (symbol == ' ' || symbol == 'x'))) {
       size_t target = selected;
-      if (!list && symbol == 0xff56) {
+      if (!list && symbol == TGSKK_KEY_PAGE_DOWN) {
         target = std::min(inlineCandidates, count - 1);
-      } else if (list && (symbol == ' ' || symbol == 0xff56)) {
+      } else if (list && (symbol == ' ' || symbol == TGSKK_KEY_PAGE_DOWN)) {
         target = inlineCandidates + (page + 1) * pageSize;
         if (target >= count) {
           if (symbol == ' ') {
@@ -315,10 +315,10 @@ class Service final : public ITfTextInputProcessorEx,
       }
       return tgskk_session_choose(session, target);
     }
-    if (symbol == 0xff52 || symbol == 0xff54)
+    if (symbol == TGSKK_KEY_UP || symbol == TGSKK_KEY_DOWN)
       return tgskk_session_choose(
-          session, symbol == 0xff54 ? std::min(selected + 1, count - 1)
-                                    : (selected ? selected - 1 : 0));
+          session, symbol == TGSKK_KEY_DOWN ? std::min(selected + 1, count - 1)
+                                            : (selected ? selected - 1 : 0));
     if (list && symbol >= '1' && symbol < '1' + pageSize) {
       const size_t index = inlineCandidates + page * pageSize + symbol - '1';
       return index < count ? tgskk_session_select(session, index)
@@ -358,41 +358,42 @@ class Service final : public ITfTextInputProcessorEx,
     BYTE state[256];
     if (!GetKeyboardState(state))
       return false;
-    modifiers = ((state[VK_SHIFT] & 0x80) ? 1 : 0) |
-                ((state[VK_CONTROL] & 0x80) ? 4 : 0) |
-                ((state[VK_MENU] & 0x80) ? 8 : 0);
-    if ((modifiers & 8) || (state[VK_LWIN] & 0x80) || (state[VK_RWIN] & 0x80))
+    modifiers = ((state[VK_SHIFT] & 0x80) ? TGSKK_MOD_SHIFT : 0) |
+                ((state[VK_CONTROL] & 0x80) ? TGSKK_MOD_CONTROL : 0) |
+                ((state[VK_MENU] & 0x80) ? TGSKK_MOD_ALT : 0);
+    if ((modifiers & TGSKK_MOD_ALT) || (state[VK_LWIN] & 0x80) ||
+        (state[VK_RWIN] & 0x80))
       return false;
     switch (key) {
     case VK_RETURN:
-      symbol = 0xff0d;
+      symbol = TGSKK_KEY_RETURN;
       break;
     case VK_BACK:
-      symbol = 0xff08;
+      symbol = TGSKK_KEY_BACKSPACE;
       break;
     case VK_ESCAPE:
-      symbol = 0xff1b;
+      symbol = TGSKK_KEY_ESCAPE;
       break;
     case VK_TAB:
-      symbol = 0xff09;
+      symbol = TGSKK_KEY_TAB;
       break;
     case VK_LEFT:
-      symbol = 0xff51;
+      symbol = TGSKK_KEY_LEFT;
       break;
     case VK_UP:
-      symbol = 0xff52;
+      symbol = TGSKK_KEY_UP;
       break;
     case VK_RIGHT:
-      symbol = 0xff53;
+      symbol = TGSKK_KEY_RIGHT;
       break;
     case VK_DOWN:
-      symbol = 0xff54;
+      symbol = TGSKK_KEY_DOWN;
       break;
     case VK_PRIOR:
-      symbol = 0xff55;
+      symbol = TGSKK_KEY_PAGE_UP;
       break;
     case VK_NEXT:
-      symbol = 0xff56;
+      symbol = TGSKK_KEY_PAGE_DOWN;
       break;
     default: {
       state[VK_CONTROL] = state[VK_LCONTROL] = state[VK_RCONTROL] = 0;
@@ -403,7 +404,8 @@ class Service final : public ITfTextInputProcessorEx,
       if (n != 1 || text[0] < 0x20 || text[0] > 0x7e)
         return false;
       symbol = text[0];
-      if ((modifiers & 4) && !(modifiers & 1) && symbol >= 'A' && symbol <= 'Z')
+      if ((modifiers & TGSKK_MOD_CONTROL) && !(modifiers & TGSKK_MOD_SHIFT) &&
+          symbol >= 'A' && symbol <= 'Z')
         symbol += 'a' - 'A';
     }
     }

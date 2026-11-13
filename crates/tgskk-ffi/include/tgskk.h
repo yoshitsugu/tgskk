@@ -13,6 +13,24 @@ typedef struct TgskkSkkserv TgskkSkkserv;
 typedef struct TgskkRuntime TgskkRuntime;
 typedef struct TgskkSession TgskkSession;
 
+enum TgskkModifier {
+  TGSKK_MOD_SHIFT = 1,
+  TGSKK_MOD_CONTROL = 4,
+  TGSKK_MOD_ALT = 8
+};
+enum TgskkKey {
+  TGSKK_KEY_BACKSPACE = 0xff08,
+  TGSKK_KEY_TAB = 0xff09,
+  TGSKK_KEY_RETURN = 0xff0d,
+  TGSKK_KEY_ESCAPE = 0xff1b,
+  TGSKK_KEY_LEFT = 0xff51,
+  TGSKK_KEY_UP = 0xff52,
+  TGSKK_KEY_RIGHT = 0xff53,
+  TGSKK_KEY_DOWN = 0xff54,
+  TGSKK_KEY_PAGE_UP = 0xff55,
+  TGSKK_KEY_PAGE_DOWN = 0xff56
+};
+
 /* All handles and their functions must stay on the creating thread. Sessions
  * share dictionary data, but never share composition state. A runtime may be
  * freed after its sessions have been created. Non-null pointers must be valid;
@@ -76,16 +94,16 @@ typedef struct TgskkView {
   const char *mode_label;
 } TgskkView;
 
-/* Returned views and strings are borrowed until the next key/select/reset/free
- * on that session. NULL means failure; read session_error and discard the
- * session. A Rust panic poisons the session and is contained at this boundary.
- * Modifiers use fcitx5's SimpleMask (XKB bits); keysym is rawKey().sym().
- * Release events are unconsumed and leave the composition unchanged. */
-/* TSF eligibility query: 1 means call key(), whose consumed flag remains
- * authoritative; commands may have side effects while passing a key through.
+/* Side-effect-free eligibility query: 1 means call key(), whose consumed flag
+ * remains authoritative; commands can have effects while passing a key through.
  * 0 means ineligible, -1 means failure: read session_error and discard session.
  * Does not advance input or invalidate a borrowed view; panic poisons session. */
 int8_t tgskk_session_may_process(TgskkSession *session, uint32_t keysym, uint32_t modifiers);
+/* Returned views and strings are borrowed until the next key/select/reset/free
+ * on that session. NULL means failure; read session_error and discard the
+ * session. A Rust panic poisons the session and is contained at this boundary.
+ * Modifiers use XKB bits; keysym uses X11/XKB numeric values (ASCII for text).
+ * Release events are unconsumed and leave the composition unchanged. */
 const TgskkView *tgskk_session_key(TgskkSession *session, uint32_t keysym,
                                    uint32_t modifiers, uint8_t release);
 const TgskkView *tgskk_session_select(TgskkSession *session, size_t index);

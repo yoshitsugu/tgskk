@@ -17,6 +17,7 @@ pub struct Pipe {
     buffer: Vec<u8>,
     position: usize,
     eof: bool,
+    failed: bool,
     timeout: Cell<Duration>,
     write_timeout: Cell<Duration>,
 }
@@ -71,6 +72,7 @@ impl Pipe {
             buffer: Vec::new(),
             position: 0,
             eof: false,
+            failed: false,
             timeout: Cell::new(Duration::from_secs(5)),
             write_timeout: Cell::new(Duration::from_millis(500)),
         })
@@ -97,16 +99,32 @@ fn receive_error(error: mpsc::RecvTimeoutError) -> io::Error {
         }
     }
 }
+fn failed_pipe() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        "Worker pipe failed; discard this transport",
+    )
+}
 impl Read for Pipe {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if self.failed {
+            return Err(failed_pipe());
+        }
         if out.is_empty() || self.eof {
             return Ok(0);
         }
         if self.position == self.buffer.len() {
-            self.buffer = self
+            match self
                 .incoming
                 .recv_timeout(self.timeout.get())
-                .map_err(receive_error)??;
+                .map_err(receive_error)
+            {
+                Ok(Ok(bytes)) => self.buffer = bytes,
+                Ok(Err(error)) | Err(error) => {
+                    self.failed = true;
+                    return Err(error);
+                }
+            }
             self.position = 0;
             if self.buffer.is_empty() {
                 self.eof = true;
@@ -121,15 +139,21 @@ impl Read for Pipe {
 }
 impl Write for Pipe {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.failed || self.eof {
+            return Err(failed_pipe());
+        }
         if bytes.is_empty() {
             return Ok(0);
         }
+        // A late acknowledgement after timeout belongs to the failed frame.
+        self.failed = true;
         self.outgoing.try_send(bytes.to_vec()).map_err(|_| {
             io::Error::new(io::ErrorKind::BrokenPipe, "Worker pipe writer unavailable")
         })?;
         self.written
             .recv_timeout(self.write_timeout.get())
             .map_err(receive_error)??;
+        self.failed = false;
         Ok(bytes.len())
     }
     fn flush(&mut self) -> io::Result<()> {

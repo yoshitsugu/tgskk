@@ -553,10 +553,10 @@ impl Assistance {
 }
 
 /// Blocking scorer for evaluation tools; never call from a key event handler.
-pub struct Evaluator(Process);
+pub struct Evaluator(Option<Process>);
 impl Evaluator {
     pub fn open(executable: &Path, model: &Path) -> io::Result<Self> {
-        Ok(Self(Process::start(executable, model)?))
+        Ok(Self(Some(Process::start(executable, model)?)))
     }
     pub fn score(
         &mut self,
@@ -567,7 +567,13 @@ impl Evaluator {
         if candidates.len() > MAX_CANDIDATES {
             return Err(io::Error::other("At most eight candidates"));
         }
-        self.0.score(&Key {
+        let process = self.0.as_mut().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Evaluator failed; open a new evaluator",
+            )
+        })?;
+        let result = process.score(&Key {
             epoch: 0,
             context: left.into(),
             reading: katakana.into(),
@@ -579,7 +585,14 @@ impl Evaluator {
                 })
                 .collect(),
             protected: Vec::new(),
-        })
+        });
+        if result
+            .as_ref()
+            .is_err_and(|error| error.kind() != io::ErrorKind::InvalidInput)
+        {
+            self.0 = None;
+        }
+        result
     }
 }
 
@@ -1125,15 +1138,46 @@ mod protocol_tests {
     #[cfg(unix)]
     #[test]
     fn refused_request_leaves_the_stream_usable() {
-        let (mut process, mut server) = pair();
+        let (process, mut server) = pair();
+        let mut evaluator = Evaluator(Some(process));
         server.write_all(&REJECTED_REQUEST.to_le_bytes()).unwrap();
         server.write_all(&1u32.to_le_bytes()).unwrap();
         server.write_all(&(-0.25f64).to_le_bytes()).unwrap();
         assert_eq!(
-            process.score(&key()).unwrap_err().kind(),
+            evaluator
+                .score("駅で", "キシャ", &["汽車".into()])
+                .unwrap_err()
+                .kind(),
             io::ErrorKind::InvalidInput
         );
-        assert_eq!(process.score(&key()).unwrap(), vec![-0.25]);
+        assert_eq!(
+            evaluator.score("駅で", "キシャ", &["汽車".into()]).unwrap(),
+            vec![-0.25]
+        );
+    }
+    #[test]
+    fn evaluator_discards_a_misaligned_or_timed_out_process() {
+        for response in [Some(2u32.to_le_bytes()), None] {
+            let (process, mut server) = pair();
+            let mut evaluator = Evaluator(Some(process));
+            if let Some(response) = response {
+                server.write_all(&response).unwrap();
+            }
+            let error = evaluator
+                .score("駅で", "キシャ", &["汽車".into()])
+                .unwrap_err();
+            assert!(matches!(
+                error.kind(),
+                io::ErrorKind::InvalidData | io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ));
+            assert_eq!(
+                evaluator
+                    .score("駅で", "キシャ", &["汽車".into()])
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::BrokenPipe
+            );
+        }
     }
     #[cfg(unix)]
     #[test]

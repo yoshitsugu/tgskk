@@ -637,6 +637,8 @@ int run(int argc, char **argv) {
   store->replace(L"");
   pump();
   require(key('K', true) && key('A'), "start before cleanup selection failure");
+  require(store->text == L"▽か",
+          "wrong preedit before cleanup selection failure");
   const ULONG beforeCleanup = store->endedCompositions;
   store->failSelectionAfterWrite = true;
   require(SUCCEEDED(manager->SetFocus(emptyDocument)),
@@ -644,6 +646,13 @@ int run(int argc, char **argv) {
   pump();
   require(store->endedCompositions == beforeCleanup + 1,
           "selection failure prevented composition termination");
+  if (!store->text.empty()) {
+    std::fprintf(stderr, "cleanup: write_pending=%d selection_failure=%d text=",
+                 store->failSelectionAfterWrite, store->failSelection);
+    for (wchar_t ch : store->text)
+      std::fprintf(stderr, "%04x ", static_cast<unsigned>(ch));
+    std::fputc('\n', stderr);
+  }
   store->failSelection = false;
   require(store->text.empty(), "cleanup selection failure retained preedit");
   require(SUCCEEDED(manager->SetFocus(document)),
