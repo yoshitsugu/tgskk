@@ -83,9 +83,11 @@ public:
   std::wstring text;
   LONG start = 0, end = 0;
   bool refuseComposition = false, failSelection = false, denyLock = false;
+  bool failSelectionAfterWrite = false;
   bool holdAsync = false;
   InputScope scope = IS_DEFAULT;
   bool scopeFailure = false;
+  ULONG endedCompositions = 0;
   HWND window = nullptr;
   ~Store() {
     if (sink)
@@ -219,6 +221,10 @@ public:
       return TS_E_INVALIDPOS;
     text.replace(a, b - a, value, count);
     start = end = a + static_cast<LONG>(count);
+    if (failSelectionAfterWrite) {
+      failSelectionAfterWrite = false;
+      failSelection = true;
+    }
     *change = {a, b, a + static_cast<LONG>(count)};
     return S_OK;
   }
@@ -251,6 +257,8 @@ public:
     TS_TEXTCHANGE local;
     HRESULT result =
         SetText(0, start, end, value, count, change ? change : &local);
+    if (SUCCEEDED(result) && b)
+      *b = end;
     return result;
   }
   HRESULT STDMETHODCALLTYPE InsertEmbeddedAtSelection(
@@ -335,6 +343,7 @@ public:
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE OnEndComposition(ITfCompositionView *) override {
+    ++endedCompositions;
     return S_OK;
   }
   void move(LONG position) {
@@ -628,10 +637,13 @@ int run(int argc, char **argv) {
   store->replace(L"");
   pump();
   require(key('K', true) && key('A'), "start before cleanup selection failure");
-  store->failSelection = true;
+  const ULONG beforeCleanup = store->endedCompositions;
+  store->failSelectionAfterWrite = true;
   require(SUCCEEDED(manager->SetFocus(emptyDocument)),
           "cleanup selection failure focus");
   pump();
+  require(store->endedCompositions == beforeCleanup + 1,
+          "selection failure prevented composition termination");
   store->failSelection = false;
   require(store->text.empty(), "cleanup selection failure retained preedit");
   require(SUCCEEDED(manager->SetFocus(document)),
