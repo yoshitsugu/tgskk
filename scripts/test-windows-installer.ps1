@@ -77,7 +77,8 @@ public static class TgskkWindowProbe {
   }
   $uninstaller = Join-Path $directory 'unins000.exe'
   $class = Split-Path $registry
-  $originalAcl = Get-Acl $class
+  $access = [Security.AccessControl.AccessControlSections]::Access
+  $originalAccess = (Get-Acl $class).GetSecurityDescriptorSddlForm($access)
   $denied = Get-Acl $class
   $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
   $rule = [Security.AccessControl.RegistryAccessRule]::new($sid, [Security.AccessControl.RegistryRights]::Delete, [Security.AccessControl.AccessControlType]::Deny)
@@ -89,7 +90,15 @@ public static class TgskkWindowProbe {
     if (!(Test-Path (Join-Path $directory 'tgskk-tip.dll')) -or !(Test-Path $registry)) {
       throw 'Failed unregistration deleted files or the retained class path'
     }
-  } finally { Set-Acl $class $originalAcl }
+  } finally {
+    $restored = Get-Acl $class
+    # Set-Acl persists only modified sections; reusing an untouched snapshot is a no-op.
+    $restored.SetSecurityDescriptorSddlForm($originalAccess, $access)
+    Set-Acl $class $restored
+    if ((Get-Acl $class).GetSecurityDescriptorSddlForm($access) -ne $originalAccess) {
+      throw 'Registry access rules were not restored'
+    }
+  }
   $removed = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$pwd/build/windows/uninstall.log" -PassThru -Wait
   if ($removed.ExitCode -ne 0) { throw "Uninstaller failed: $($removed.ExitCode)" }
   if (Test-Path $registry) { throw 'Uninstall retained TSF registration' }
