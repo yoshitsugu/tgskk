@@ -2,7 +2,8 @@
 
 An experimental x64 TSF frontend for ordinary desktop applications.
 It uses the same Rust/CSKK input engine as the Linux frontends.
-This is a developer build, without an installer or signed release binaries.
+Installer and ZIP development builds are available from the Windows workflow.
+They are unsigned; interactive application compatibility is still being tested.
 
 The frontend supports kana input, okurigana, dictionary conversion, word entry,
 persistent learning, local AI ranking and SKK servers. The first four candidates
@@ -27,6 +28,33 @@ Fields whose InputScope query fails disable input, as do password/private fields
 AI and network access require a known non-private scope and a collapsed selection.
 Only bounded text left of the caret is used for local AI; servers receive readings,
 never surrounding text.
+
+## Install
+
+Download `windows-x64-distribution` from a successful Windows Actions run and
+extract it. Run `tgskk-*-windows-x64-setup.exe` with administrator permission.
+It installs the x64 frontend, broker, settings app, large dictionary, verified
+AI model, Google helper and app-local Microsoft C++ runtime under Program Files.
+Add Japanese in Windows language settings if needed, then select tgskk as its
+input method. The files are unsigned; compare the accompanying SHA256SUMS with
+`Get-FileHash` before installation.
+
+Before updating or removing tgskk, finish composition and sign out of Windows.
+Other signed-in users must also close applications using tgskk. Setup refuses
+to replace binaries in use and never forcibly terminates input applications or
+the broker. Updates and uninstall preserve `%LOCALAPPDATA%\tgskk`, including
+settings, learned entries and backups. Uninstall through Windows Installed apps.
+The ZIP has the same payload for manual registration; moving a registered DLL
+requires unregistering the previous path first.
+
+## Settings
+
+Open **tgskk settings** from the Start menu. It edits dictionary paths and
+encoding, AI and model settings, Google/custom SKK servers, and the number of
+candidates shown before the list (0–64, default 4).
+Saving validates the complete configuration and replaces it atomically;
+invalid values or write errors preserve the previous file and user dictionary.
+Sign out and back in to apply changes to all input applications and the broker.
 
 ## Build
 
@@ -87,8 +115,10 @@ Skkserv=Google
 
 AI and Google lookup are enabled by default. Missing optional binaries or a
 missing model leave dictionary input available and emit a diagnostic.
-For AI, place `tgskk-zenz-worker.exe` beside the broker and the verified model at
-`%LOCALAPPDATA%\tgskk\models\zenz-v3.2-small-Q5_K_M.gguf`.
+The installer supplies shared model weights. A per-user model at
+`%LOCALAPPDATA%\tgskk\models\zenz-v3.2-small-Q5_K_M.gguf` takes precedence.
+For manual builds, place `tgskk-zenz-worker.exe` beside the broker and use either
+that per-user model location or a `models` directory beside the broker.
 Build the worker from [native/zenz](../../native/zenz) using CMake/MSVC; the
 [Windows workflow](../../.github/workflows/windows.yml) shows the pinned source
 and model preparation. `Worker` and `Model` override their absolute or relative

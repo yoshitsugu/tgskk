@@ -70,6 +70,59 @@ jobs:
             & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --remove-fixture
             if ($LASTEXITCODE -ne 0) { throw "TSF fixture unregistration failed" }
           }
+      - name: Build bundled Google helper
+        run: cargo +1.88.0 build --release --manifest-path third_party/gskkserv/Cargo.toml --target-dir target --locked
+      - name: Stage Windows distribution
+        shell: pwsh
+        run: |
+          python scripts/windows-assets.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binaries = "$pwd/build/windows/Release"
+          Copy-Item build/zenz-windows/Release/tgskk-zenz-worker.exe "$binaries/tgskk-zenz-worker.exe"
+          Copy-Item target/release/gskkserv.exe "$binaries/tgskk-google-skkserv.exe"
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
+          if (!$crt) { throw "MSVC redistributable runtime not found" }
+          python scripts/stage-windows.py --binaries "$binaries" --runtime "$($crt.FullName)" `
+            --dictionary build/windows-assets/SKK-JISYO.L --model build/models/zenz-v3.2-small-Q5_K_M.gguf `
+            --llama-source build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478 --output build/windows-package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = (Select-String '^version = "([^"]+)"' Cargo.toml).Matches[0].Groups[1].Value
+          $compiler = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          & $compiler "/DPayload=$pwd/build/windows-package/payload" "/DAppVersion=$version" `
+            "/DOutput=$pwd/build/windows-package" packaging/windows/tgskk.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test install, update and uninstall
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem build/windows-package/*-setup.exe | Select-Object -ExpandProperty FullName
+          & scripts/test-windows-installer.ps1 -Installer $installer -Payload "$pwd/build/windows-package/payload"
+      - name: Bundle source and checksums
+        shell: bash
+        run: |
+          git archive --format=tar.gz HEAD > build/windows-package/tgskk-source.tar.gz
+          cp build/downloads/llama-*.tar.gz build/windows-package/
+          cd build/windows-package
+          sha256sum ./*.zip ./*-setup.exe ./*.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-x64-distribution
+          path: |
+            build/windows-package/*.zip
+            build/windows-package/*-setup.exe
+            build/windows-package/*.tar.gz
+            build/windows-package/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-settings-screenshot
+          path: build/windows/settings.png
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v6
         if: always()
         with:
