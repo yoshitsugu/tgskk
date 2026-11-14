@@ -32,6 +32,10 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: 1.99.1
         run: bash scripts/lint.sh
+      - name: Test deterministic scoring schedules
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+        run: cargo test -p tgskk-zenz --lib simulation --locked
   dependencies:
     runs-on: ubuntu-latest
     timeout-minutes: 15

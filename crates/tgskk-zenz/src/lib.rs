@@ -313,54 +313,66 @@ fn worker_loop(
             }
             slot.take().expect("pending job")
         };
-        if job.epoch.load(Ordering::Acquire) != job.key.epoch {
-            continue;
+        if job_is_ready(queue, &job)? {
+            let result = score(&job.key);
+            complete_job(queue, job, result)?;
         }
-        if queue
-            .ready
-            .lock()
-            .map_err(|_| io::Error::other("Zenz cache poisoned"))?
-            .iter()
-            .any(|(key, _)| key == &job.key)
-        {
-            continue;
-        }
-        let scores = match score(&job.key) {
-            Ok(scores) => {
-                queue.scored.store(true, Ordering::Release);
-                scores
-            }
-            Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
-                if let Ok(mut diagnostic) = queue.diagnostic.lock() {
-                    *diagnostic =
-                        Some("Zenz rejected one conversion request; using dictionary order".into());
-                }
-                continue;
-            }
-            Err(error) => {
-                let mut slot = queue
-                    .pending
-                    .lock()
-                    .map_err(|_| io::Error::other("Zenz queue poisoned"))?;
-                if slot.is_none() && job.epoch.load(Ordering::Acquire) == job.key.epoch {
-                    *slot = Some(job);
-                }
-                return Err(error);
-            }
-        };
-        if job.epoch.load(Ordering::Acquire) != job.key.epoch {
-            continue;
-        }
-        let mut ready = queue
-            .ready
-            .lock()
-            .map_err(|_| io::Error::other("Zenz cache poisoned"))?;
-        if ready.len() == CACHE_SIZE {
-            ready.pop_front();
-        }
-        ready.push_back((job.key, scores));
     }
 }
+
+fn job_is_ready(queue: &Queue, job: &Job) -> io::Result<bool> {
+    if job.epoch.load(Ordering::Acquire) != job.key.epoch {
+        return Ok(false);
+    }
+    Ok(!queue
+        .ready
+        .lock()
+        .map_err(|_| io::Error::other("Zenz cache poisoned"))?
+        .iter()
+        .any(|(key, _)| key == &job.key))
+}
+
+fn complete_job(queue: &Queue, job: Job, result: io::Result<Vec<f64>>) -> io::Result<()> {
+    let scores = match result {
+        Ok(scores) => {
+            queue.scored.store(true, Ordering::Release);
+            scores
+        }
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
+            if let Ok(mut diagnostic) = queue.diagnostic.lock() {
+                *diagnostic =
+                    Some("Zenz rejected one conversion request; using dictionary order".into());
+            }
+            return Ok(());
+        }
+        Err(error) => {
+            let mut slot = queue
+                .pending
+                .lock()
+                .map_err(|_| io::Error::other("Zenz queue poisoned"))?;
+            if slot.is_none() && job.epoch.load(Ordering::Acquire) == job.key.epoch {
+                *slot = Some(job);
+            }
+            return Err(error);
+        }
+    };
+    if job.epoch.load(Ordering::Acquire) != job.key.epoch {
+        return Ok(());
+    }
+    let mut ready = queue
+        .ready
+        .lock()
+        .map_err(|_| io::Error::other("Zenz cache poisoned"))?;
+    if ready.len() == CACHE_SIZE {
+        ready.pop_front();
+    }
+    ready.push_back((job.key, scores));
+    Ok(())
+}
+
+#[cfg(test)]
+mod simulation;
+
 static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
 fn next_epoch() -> u64 {
     NEXT_EPOCH.fetch_add(1, Ordering::Relaxed)
@@ -591,7 +603,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
 
-    fn worker() -> Worker {
+    pub(super) fn worker() -> Worker {
         Worker(Arc::new(Service {
             queue: Arc::new(Queue {
                 pending: Mutex::new(None),
@@ -618,7 +630,7 @@ mod tests {
             protected_indices: Vec::new(),
         }
     }
-    fn input() -> InputSession {
+    pub(super) fn input() -> InputSession {
         InputSession::open(
             concat!(
                 env!("CARGO_MANIFEST_DIR"),
