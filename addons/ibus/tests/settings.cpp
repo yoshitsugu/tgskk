@@ -45,7 +45,6 @@ int main(int argc, char **argv) {
   // These tests must not spawn the host's IBus or use its input method.
   g_setenv("GDK_BACKEND", "x11", TRUE);
   g_setenv("GTK_IM_MODULE", "gtk-im-context-simple", TRUE);
-  gtk_init(&argc, &argv);
   const auto path = root + "/config/tgskk/ibus.conf";
   auto config = tgskk_ibus::Config::load();
   std::filesystem::create_directories(root + "/config/tgskk");
@@ -102,6 +101,7 @@ int main(int argc, char **argv) {
   g_assert_true(WIFEXITED(status));
   g_assert_cmpint(WEXITSTATUS(status), ==, 0);
   g_assert_true(bytes(path) == original);
+  gtk_init(&argc, &argv);
   auto *window = tgskk_ibus::createSettingsWindow();
   gtk_widget_show_all(window);
   auto *inlineCandidates = find(window, "InlineCandidates");
