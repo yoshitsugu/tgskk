@@ -8,6 +8,7 @@ struct InputScopePolicy {
   HRESULT status = S_OK;
   bool known = false;
   bool localAi = false;
+  // Missing metadata may permit on-device AI; external lookups require opt-in.
   bool networkAllowed(bool allowWithoutScope) const {
     return SUCCEEDED(status) && (known || (localAi && allowWithoutScope));
   }
@@ -25,10 +26,26 @@ inline bool sensitiveInputScope(InputScope value) {
          value == IS_NUMERIC_PASSWORD || value == IS_NUMERIC_PIN ||
          value == IS_ALPHANUMERIC_PIN || value == IS_ALPHANUMERIC_PIN_SET;
 }
+inline InputScopePolicy scopeListPolicy(HRESULT status,
+                                        const InputScope *scopes, UINT count) {
+  if (SUCCEEDED(status) && count && !scopes)
+    return {E_UNEXPECTED, false};
+  bool known = status == S_OK && count > 0;
+  if (SUCCEEDED(status)) {
+    for (UINT i = 0; i < count; ++i) {
+      if (sensitiveInputScope(scopes[i])) {
+        return {E_ACCESSDENIED, false};
+      }
+      // New or invalid scope values are not evidence of a non-private field.
+      known &=
+          (scopes[i] >= IS_DEFAULT && scopes[i] <= IS_CHAT_WITHOUT_EMOJI) ||
+          (scopes[i] >= IS_ENUMSTRING && scopes[i] <= IS_PHRASELIST);
+    }
+  }
+  return {status, known, known};
+}
 inline InputScopePolicy inputScopePolicy(HRESULT status, const VARIANT &value) {
-  if (FAILED(status))
-    return unavailableInputScope(status);
-  if (status == S_FALSE)
+  if (FAILED(status) || status == S_FALSE)
     return unavailableInputScope(status);
   if (value.vt == VT_EMPTY || value.vt == VT_NULL)
     return unavailableInputScope(S_FALSE);
@@ -43,25 +60,8 @@ inline InputScopePolicy inputScopePolicy(HRESULT status, const VARIANT &value) {
   UINT count = 0;
   status = object->GetInputScopes(&scopes, &count);
   object->Release();
-  if (SUCCEEDED(status) && count && !scopes)
-    status = E_UNEXPECTED;
-  bool known = status == S_OK && count > 0;
-  if (SUCCEEDED(status)) {
-    for (UINT i = 0; i < count; ++i) {
-      if (sensitiveInputScope(scopes[i])) {
-        status = E_ACCESSDENIED;
-        known = false;
-        break;
-      }
-      // New or invalid scope values are not evidence of a non-private field.
-      known &=
-          (scopes[i] >= IS_DEFAULT && scopes[i] <= IS_CHAT_WITHOUT_EMOJI) ||
-          (scopes[i] >= IS_ENUMSTRING && scopes[i] <= IS_PHRASELIST);
-    }
-  }
+  const auto policy = scopeListPolicy(status, scopes, count);
   CoTaskMemFree(scopes);
-  // Missing optional metadata permits local inference, but an explicit unknown
-  // descriptor does not. External lookups without metadata require opt-in.
-  return {status, known, known};
+  return policy;
 }
 } // namespace tgskk::windows
