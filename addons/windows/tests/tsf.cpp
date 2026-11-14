@@ -478,7 +478,10 @@ public:
   }
 };
 struct CaptureRegistration {
-  CapturingFactory *factory = nullptr;
+  struct ReleaseFactory {
+    void operator()(CapturingFactory *value) const { value->Release(); }
+  };
+  std::unique_ptr<CapturingFactory, ReleaseFactory> factory;
   DWORD cookie = 0;
   HRESULT close() {
     if (cookie) {
@@ -487,10 +490,7 @@ struct CaptureRegistration {
         return result;
       cookie = 0;
     }
-    if (factory) {
-      factory->Release();
-      factory = nullptr;
-    }
+    factory.reset();
     return S_OK;
   }
   ~CaptureRegistration() { close(); }
@@ -565,6 +565,8 @@ int run(int argc, char **argv) {
           "[--rejection|--rejection-control|--direct-key|--ai|--reentrant-"
           "scope]");
   const std::string mode = argc == 4 ? argv[3] : "";
+  const bool directKey = mode == "--direct-key";
+  const bool reentrant = mode.starts_with("--reentrant-");
   SetEnvironmentVariableA("TGSKK_DICTIONARY", argv[2]);
   require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
           "COM init");
@@ -636,15 +638,17 @@ int run(int argc, char **argv) {
       SUCCEEDED(manager->AssociateFocus(store->window, document, &previous)),
       "associate window focus");
   CaptureRegistration captured;
-  if (mode == "--direct-key" || mode.starts_with("--reentrant-")) {
+  if (directKey || reentrant) {
     require(SUCCEEDED(getFactory(serviceId, IID_IClassFactory,
                                  reinterpret_cast<void **>(&factory))),
             "capturing factory target");
-    captured.factory = new CapturingFactory(factory);
-    require(SUCCEEDED(CoRegisterClassObject(
-                serviceId, captured.factory, CLSCTX_INPROC_SERVER,
-                REGCLS_MULTIPLEUSE, &captured.cookie)),
-            "capturing factory registration");
+    captured.factory.reset(new CapturingFactory(factory));
+    DWORD registrationCookie = 0;
+    const auto registered = CoRegisterClassObject(
+        serviceId, captured.factory.get(), CLSCTX_INPROC_SERVER,
+        REGCLS_MULTIPLEUSE, &registrationCookie);
+    captured.cookie = registrationCookie;
+    require(SUCCEEDED(registered), "capturing factory registration");
   }
 
   ITfInputProcessorProfiles *profiles = nullptr;
@@ -686,7 +690,7 @@ int run(int argc, char **argv) {
   require(SUCCEEDED(manager->QueryInterface(IID_ITfKeystrokeMgr,
                                             reinterpret_cast<void **>(&keys))),
           "key routing");
-  if (mode == "--direct-key") {
+  if (directKey) {
     ITfKeyEventSink *direct = captured.factory->sink;
     require(direct != nullptr, "capture active TSF key sink");
     BYTE controlState[256] = {};
@@ -790,7 +794,7 @@ int run(int argc, char **argv) {
     store->refuseComposition = false;
     require(key('A'), "input after rejected composition");
     require(store->text == L"あ", "rejected composition advanced input state");
-  } else if (mode.starts_with("--reentrant-")) {
+  } else if (reentrant) {
     auto *direct = captured.factory->sink;
     require(direct != nullptr, "capture reentrant service");
     ITfTextInputProcessor *processor = nullptr;
