@@ -1,6 +1,15 @@
 #pragma once
 #include <msctf.h>
 
+#ifdef __MINGW32__
+// MinGW headers omit this Windows SDK capability GUID.
+inline const GUID GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT = {
+    0xccf05dd7,
+    0x4a87,
+    0x11d7,
+    {0xa6, 0xe2, 0x00, 0x06, 0x5b, 0x84, 0x43, 0x5c}};
+#endif
+
 // Older MinGW headers omit this interface; its ABI follows the Windows SDK.
 #ifndef __ITfTextInputProcessorEx_INTERFACE_DEFINED__
 #define __ITfTextInputProcessorEx_INTERFACE_DEFINED__

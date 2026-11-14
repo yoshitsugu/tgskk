@@ -9,6 +9,14 @@ static void require(bool condition, const char *message) {
 }
 int main() {
   try {
+    bool keyboard = false, inputMode = false, tray = false;
+    for (const auto &category : registeredCategories) {
+      keyboard |= category == GUID_TFCAT_TIP_KEYBOARD;
+      inputMode |= category == GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT;
+      tray |= category == systemTrayCategory;
+    }
+    require(keyboard && inputMode && tray && registeredCategories.size() == 3,
+            "registered categories do not match implemented capabilities");
     for (uint8_t mode = 0; mode < imeModes.size(); ++mode) {
       const auto extra = IME_CMODE_ROMAN | IME_CMODE_SOFTKBD | IME_CMODE_SYMBOL;
       const auto flags = conversionFlags(mode, extra | imeModeMask);

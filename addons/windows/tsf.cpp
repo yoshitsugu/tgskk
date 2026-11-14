@@ -1729,8 +1729,7 @@ extern "C" HRESULT __stdcall DllRegisterServer() {
                                   CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                   reinterpret_cast<void **>(&categories));
       if (SUCCEEDED(result)) {
-        for (const auto &category :
-             {GUID_TFCAT_TIP_KEYBOARD, systemTrayCategory}) {
+        for (const auto &category : registeredCategories) {
           result = categories->RegisterCategory(serviceId, category, serviceId);
           if (FAILED(result))
             break;
@@ -1743,8 +1742,7 @@ extern "C" HRESULT __stdcall DllRegisterServer() {
   if (FAILED(result) && createdRegistry) {
     HRESULT cleanup = S_OK;
     if (categories) {
-      for (const auto &category :
-           {systemTrayCategory, GUID_TFCAT_TIP_KEYBOARD}) {
+      for (const auto &category : registeredCategories) {
         const auto removed =
             categories->UnregisterCategory(serviceId, category, serviceId);
         if (FAILED(removed))
@@ -1790,8 +1788,7 @@ extern "C" HRESULT __stdcall DllUnregisterServer() {
                                 CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                 reinterpret_cast<void **>(&categories));
       if (SUCCEEDED(result)) {
-        for (const auto &category :
-             {systemTrayCategory, GUID_TFCAT_TIP_KEYBOARD}) {
+        for (const auto &category : registeredCategories) {
           const auto removed =
               categories->UnregisterCategory(serviceId, category, serviceId);
           if (FAILED(removed))

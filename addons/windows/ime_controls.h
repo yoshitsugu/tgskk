@@ -20,6 +20,9 @@ inline const GUID systemTrayCategory = {
     0x7bab,
     0x4bc1,
     {0x9c, 0x69, 0xcf, 0x81, 0x89, 0x0f, 0x0e, 0xf5}};
+inline const std::array<GUID, 3> registeredCategories = {
+    GUID_TFCAT_TIP_KEYBOARD, GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
+    systemTrayCategory};
 inline const GUID imeToggleId = {
     0xa8d5d721,
     0xbc04,
