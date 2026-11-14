@@ -1,3 +1,4 @@
+#![allow(deprecated, reason = "These tests cover the legacy dictionary API.")]
 mod utils;
 
 use crate::utils::{make_temp_file, test_context_with_dictionaries, transition_check};

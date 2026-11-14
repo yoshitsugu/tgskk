@@ -3,10 +3,14 @@ name = "tgskk-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "tgskk"
 path = "src/main.rs"
 
 [dependencies]
-tgskk-core = { path = "../tgskk-core" }
+tgskk-core = { path = "../tgskk-core", version = "0.1.0" }
+
+[lints]
+workspace = true

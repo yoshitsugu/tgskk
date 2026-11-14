@@ -45,7 +45,7 @@ impl Pipe {
                         Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                         Err(error) => Err(error),
                     };
-                    let failed = message.as_ref().map_or(true, |bytes| bytes.is_empty());
+                    let failed = message.as_ref().map_or(true, Vec::is_empty);
                     if send.send(message).is_err() || failed {
                         break;
                     }
@@ -57,7 +57,7 @@ impl Pipe {
             .name("tgskk-stdio-write".into())
             .spawn(move || {
                 while let Ok(bytes) = receive.recv() {
-                    let result = stdin.write_all(&bytes).and_then(|_| stdin.flush());
+                    let result = stdin.write_all(&bytes).and_then(|()| stdin.flush());
                     let failed = result.is_err();
                     if acknowledge.send(result).is_err() || failed {
                         break;
@@ -168,7 +168,7 @@ where
     S: AsRef<OsStr>,
 {
     use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut child = Command::new(executable)
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)

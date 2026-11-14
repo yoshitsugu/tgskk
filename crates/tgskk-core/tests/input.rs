@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::{cell::Cell, rc::Rc, sync::Arc};
 use tgskk_core::input::{
     CompositionMode, ConversionCandidate, ConversionError, ConversionRequest, ConversionResponse,
@@ -102,7 +103,7 @@ fn external_candidates_use_current_okuri_and_native_confirmation() {
 fn external_only_reading_does_not_enter_registration() {
     let mut input = session();
     input.set_conversion_provider(Some(Box::new(|request: &ConversionRequest| {
-        assert!(request.candidates.is_empty());
+        assert!(request.candidates.is_empty(), "{:?}", request.candidates);
         ConversionResponse {
             additional_candidates: vec![ConversionCandidate {
                 text: "東京".into(),
@@ -219,7 +220,7 @@ fn reset_discards_unconfirmed_conversion_and_late_results() {
     type_keys(&mut input, "K a n j i space");
     let _ = input.reset();
     assert_eq!(input.composition_mode(), CompositionMode::Direct);
-    assert!(input.candidates().is_empty());
+    assert!(input.candidates().is_empty(), "{:?}", input.candidates());
     assert_eq!(type_keys(&mut input, "k a").committed, "か");
 }
 
@@ -362,7 +363,7 @@ fn default_learning_policy_preserves_native_learning_but_not_provider_choices() 
         if learned {
             assert_eq!(candidates[0].text, committed);
         } else {
-            assert!(candidates.is_empty());
+            assert!(candidates.is_empty(), "{candidates:?}");
         }
     }
 }
@@ -380,7 +381,7 @@ fn abort_after_kana_confirmation_never_revives_completed_composition() {
         for _ in 0..3 {
             let outcome = key(&mut input, "C-g");
             assert!(outcome.preedit.is_empty(), "{prefix}: {}", outcome.preedit);
-            assert!(outcome.committed.is_empty());
+            assert_eq!(outcome.committed, "");
             assert_eq!(
                 input.composition_mode(),
                 CompositionMode::Direct,
@@ -402,7 +403,7 @@ fn abort_after_purge_never_revives_empty_candidate_selection() {
     type_keys(&mut input, "K a n j i space X");
     assert_eq!(input.composition_mode(), CompositionMode::Direct);
     let outcome = key(&mut input, "C-g");
-    assert!(outcome.preedit.is_empty());
+    assert_eq!(outcome.preedit, "");
     assert_eq!(input.composition_mode(), CompositionMode::Direct);
     assert_eq!(key(&mut input, "space").committed, " ");
     assert_eq!(type_keys(&mut input, "k a").committed, "か");
@@ -430,9 +431,9 @@ fn empty_reading_never_queries_provider_or_enters_candidate_selection() {
         key(&mut input, start);
         for _ in 0..2 {
             let outcome = key(&mut input, "space");
-            assert!(outcome.committed.is_empty());
+            assert_eq!(outcome.committed, "");
             assert_eq!(input.composition_mode(), expected_mode);
-            assert!(input.candidates().is_empty());
+            assert!(input.candidates().is_empty(), "{:?}", input.candidates());
         }
         assert_eq!(calls.get(), 0);
     }
@@ -591,7 +592,11 @@ fn conversion_preview_does_not_select_learn_or_call_the_provider() {
         let preview = input.preview_conversion().unwrap();
         assert_eq!(preview.reading, "かんじ");
         assert_eq!(preview.candidates[0].text, "漢字");
-        assert!(preview.protected_indices.is_empty());
+        assert!(
+            preview.protected_indices.is_empty(),
+            "{:?}",
+            preview.protected_indices
+        );
         assert_eq!(input.composition_mode(), CompositionMode::PreComposition);
     }
     assert_eq!(calls.get(), 0);
@@ -671,7 +676,10 @@ fn bounded_preview_preserves_identity_and_does_not_truncate_actual_conversion() 
     let directory = tempfile::tempdir().unwrap();
     let system_path = directory.path().join("system.utf8");
     let user_path = directory.path().join("user.utf8");
-    let candidates: String = (0..32).map(|i| format!("候補{i}/")).collect();
+    let mut candidates = String::new();
+    for i in 0..32 {
+        write!(candidates, "候補{i}/").unwrap();
+    }
     std::fs::write(
         &system_path,
         format!(";; okuri-ari entries.\n;; okuri-nasi entries.\nてすと /{candidates}\n"),
@@ -698,7 +706,9 @@ fn bounded_preview_preserves_identity_and_does_not_truncate_actual_conversion() 
             .preview_conversion_limited(0)
             .unwrap()
             .candidates
-            .is_empty()
+            .is_empty(),
+        "{:?}",
+        input.preview_conversion_limited(0).unwrap().candidates
     );
     input.set_conversion_provider(Some(Box::new(|request: &ConversionRequest| {
         assert_eq!(request.candidates.len(), 33);
@@ -757,9 +767,9 @@ fn empty_reading_never_invokes_missing_provider() {
         key(&mut input, start);
         for _ in 0..2 {
             let outcome = key(&mut input, "space");
-            assert!(outcome.committed.is_empty());
+            assert_eq!(outcome.committed, "");
             assert_eq!(input.composition_mode(), expected_mode);
-            assert!(input.candidates().is_empty());
+            assert!(input.candidates().is_empty(), "{:?}", input.candidates());
         }
         assert_eq!(calls.get(), 0);
     }
@@ -782,8 +792,12 @@ fn missing_provider_candidates_feed_global_provider_without_protection() {
     let mut input = session();
     input.set_missing_conversion_provider(Some(Box::new(|request: &ConversionRequest| {
         assert_eq!(request.reading, "とうきょう");
-        assert!(request.candidates.is_empty());
-        assert!(request.protected_indices.is_empty());
+        assert!(request.candidates.is_empty(), "{:?}", request.candidates);
+        assert!(
+            request.protected_indices.is_empty(),
+            "{:?}",
+            request.protected_indices
+        );
         ConversionResponse {
             additional_candidates: vec![
                 ConversionCandidate {
@@ -809,7 +823,11 @@ fn missing_provider_candidates_feed_global_provider_without_protection() {
             ["とうきょう", "東京"]
         );
         assert_eq!(request.candidates[1].annotation.as_deref(), Some("missing"));
-        assert!(request.protected_indices.is_empty());
+        assert!(
+            request.protected_indices.is_empty(),
+            "{:?}",
+            request.protected_indices
+        );
         ConversionResponse {
             order: Some(vec![1, 0]),
             ..Default::default()
@@ -856,7 +874,7 @@ fn invalid_missing_response_reports_error_and_keeps_local_fallback() {
         let outcome = type_keys(&mut input, "T o u k y o u space");
         assert_eq!(outcome.conversion_error, Some(expected));
         assert_eq!(empty_seen.get(), 0);
-        assert!(input.candidates().is_empty());
+        assert!(input.candidates().is_empty(), "{:?}", input.candidates());
     }
 }
 
@@ -907,7 +925,7 @@ fn learning_policies_combine_conservatively_across_stages() {
         if learned {
             assert_eq!(candidates[0].text, "東京");
         } else {
-            assert!(candidates.is_empty());
+            assert!(candidates.is_empty(), "{candidates:?}");
         }
     }
 }

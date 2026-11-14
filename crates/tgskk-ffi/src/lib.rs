@@ -30,17 +30,16 @@ unsafe extern "C" fn tgskk_session_may_process(
     if session.poisoned {
         return -1;
     }
-    match catch_unwind(AssertUnwindSafe(|| {
+    if let Ok(value) = catch_unwind(AssertUnwindSafe(|| {
         session
             .input
             .may_process(&CskkKeyEvent::from_fcitx_keyevent(keysym, modifiers, false))
     })) {
-        Ok(value) => value as i8,
-        Err(_) => {
-            session.poisoned = true;
-            session.error = diagnostic(PANIC_DIAGNOSTIC.into());
-            -1
-        }
+        i8::from(value)
+    } else {
+        session.poisoned = true;
+        session.error = diagnostic(PANIC_DIAGNOSTIC);
+        -1
     }
 }
 
@@ -129,7 +128,7 @@ impl TgskkSession {
             }
         }
         self.error = diagnostic(
-            outcome
+            &outcome
                 .conversion_error
                 .map(|e| format!("{e:?}"))
                 .unwrap_or_default(),
@@ -161,7 +160,7 @@ fn empty_outcome(mode_change: Option<ModeChange>) -> InputOutcome {
     }
 }
 
-fn diagnostic(message: String) -> CString {
+fn diagnostic(message: &str) -> CString {
     CString::new(message.replace('\0', "\\0")).expect("NULs were escaped")
 }
 
@@ -187,7 +186,7 @@ unsafe fn report<T>(
         Ok(value) => Some(value),
         Err(message) => {
             if !error.is_null() {
-                unsafe { *error = diagnostic(message).into_raw() };
+                unsafe { *error = diagnostic(&message).into_raw() };
             }
             None
         }
@@ -224,7 +223,7 @@ unsafe extern "C" fn tgskk_zenz_take_error(zenz: *const TgskkZenz) -> *mut c_cha
     catch_unwind(AssertUnwindSafe(|| {
         unsafe { zenz.as_ref() }
             .and_then(|z| z.worker.take_error())
-            .map_or(ptr::null_mut(), |message| diagnostic(message).into_raw())
+            .map_or(ptr::null_mut(), |message| diagnostic(&message).into_raw())
     }))
     .unwrap_or(ptr::null_mut())
 }
@@ -280,7 +279,7 @@ unsafe extern "C" fn tgskk_session_context(
     match result {
         Ok(Ok(())) => 1,
         Ok(Err(message)) => {
-            session.error = diagnostic(message);
+            session.error = diagnostic(&message);
             0
         }
         Err(_) => {
@@ -423,10 +422,10 @@ unsafe fn session_action(
     }))
     .unwrap_or_else(|_| Err(PANIC_DIAGNOSTIC.to_owned()));
     match result {
-        Ok(()) => &session.view,
+        Ok(()) => &raw const session.view,
         Err(message) => {
             session.poisoned = true;
-            session.error = diagnostic(message);
+            session.error = diagnostic(&message);
             ptr::null()
         }
     }
@@ -483,7 +482,7 @@ unsafe extern "C" fn tgskk_session_reset(session: *mut TgskkSession) -> *const T
 unsafe extern "C" fn tgskk_session_view(session: *const TgskkSession) -> *const TgskkView {
     unsafe { session.as_ref() }
         .filter(|s| !s.poisoned)
-        .map_or(ptr::null(), |s| &s.view)
+        .map_or(ptr::null(), |s| &raw const s.view)
 }
 
 #[unsafe(no_mangle)]
@@ -592,11 +591,11 @@ mod tests {
                     dictionary().as_ptr(),
                     c"utf-8".as_ptr(),
                     user.as_ptr(),
-                    &mut error,
+                    &raw mut error,
                 )
             };
             assert!(!runtime.is_null(), "{}", unsafe { message(error) });
-            let session = unsafe { tgskk_session_new(runtime, &mut error) };
+            let session = unsafe { tgskk_session_new(runtime, &raw mut error) };
             assert!(!session.is_null());
             assert!(error.is_null());
             Self {
@@ -672,7 +671,7 @@ mod tests {
                 let view = tgskk_session_set_mode(fixture.session, mode);
                 assert!(!view.is_null());
                 assert_eq!(message((*view).mode_label), label);
-                assert!(message((*view).preedit).is_empty());
+                assert_eq!(message((*view).preedit), "");
                 assert_eq!((*view).candidate_count, 0);
                 assert_eq!(message((*keys(fixture.session, "a")).committed), committed);
             }
@@ -747,7 +746,7 @@ mod tests {
         unsafe {
             let other = tgskk_session_new(fixture.runtime, ptr::null_mut());
             keys(fixture.session, "K a n j i space");
-            assert!(message((*tgskk_session_view(other)).preedit).is_empty());
+            assert_eq!(message((*tgskk_session_view(other)).preedit), "");
             tgskk_session_select(fixture.session, 1);
             let view = keys(other, "K a n j i space");
             assert_eq!(message((*view).preedit), "▼感じ");
@@ -774,15 +773,15 @@ mod tests {
             keys(fixture.session, "K a n j i space");
             tgskk_session_select(fixture.session, 1);
             let mut error = ptr::null_mut();
-            assert_eq!(tgskk_runtime_save(fixture.runtime, &mut error), 1);
+            assert_eq!(tgskk_runtime_save(fixture.runtime, &raw mut error), 1);
             assert!(error.is_null());
             let reopened = tgskk_runtime_new(
                 dictionary().as_ptr(),
                 c"utf-8".as_ptr(),
                 fixture.user.as_ptr(),
-                &mut error,
+                &raw mut error,
             );
-            let session = tgskk_session_new(reopened, &mut error);
+            let session = tgskk_session_new(reopened, &raw mut error);
             assert_eq!(
                 message((*keys(session, "K a n j i space")).preedit),
                 "▼感じ"
@@ -795,16 +794,16 @@ mod tests {
             let backup = format!("{}.BAK", fixture.user.to_str().unwrap());
             let previous_backup = std::fs::read(&backup).unwrap();
             std::fs::remove_file(fixture.user.to_str().unwrap()).unwrap();
-            assert_eq!(tgskk_runtime_save(fixture.runtime, &mut error), 1);
+            assert_eq!(tgskk_runtime_save(fixture.runtime, &raw mut error), 1);
             assert!(error.is_null());
             assert_eq!(std::fs::read(backup).unwrap(), previous_backup);
             let runtime = tgskk_runtime_new(
                 dictionary().as_ptr(),
                 c"utf-8".as_ptr(),
                 fixture.user.as_ptr(),
-                &mut error,
+                &raw mut error,
             );
-            let session = tgskk_session_new(runtime, &mut error);
+            let session = tgskk_session_new(runtime, &raw mut error);
             assert_eq!(
                 message((*keys(session, "K a n j i space")).preedit),
                 format!("▼{selected}")
@@ -821,30 +820,30 @@ mod tests {
             keys(fixture.session, "K a n j i space");
             tgskk_session_select(fixture.session, 1);
             let mut error = ptr::null_mut();
-            assert_eq!(tgskk_runtime_save(fixture.runtime, &mut error), 1);
+            assert_eq!(tgskk_runtime_save(fixture.runtime, &raw mut error), 1);
             let previous = std::fs::read(fixture.user.to_str().unwrap()).unwrap();
             keys(fixture.session, "K a n j i space");
             tgskk_session_select(fixture.session, 1);
             let backup = format!("{}.BAK", fixture.user.to_str().unwrap());
             std::fs::remove_file(&backup).unwrap();
             std::fs::create_dir(&backup).unwrap();
-            assert_eq!(tgskk_runtime_save(fixture.runtime, &mut error), 0);
-            assert!(!message(error).is_empty());
+            assert_eq!(tgskk_runtime_save(fixture.runtime, &raw mut error), 0);
+            assert_ne!(message(error), "");
             tgskk_string_free(error);
             assert_eq!(
                 std::fs::read(fixture.user.to_str().unwrap()).unwrap(),
                 previous
             );
             std::fs::remove_dir(&backup).unwrap();
-            assert_eq!(tgskk_runtime_save(fixture.runtime, &mut error), 1);
+            assert_eq!(tgskk_runtime_save(fixture.runtime, &raw mut error), 1);
             assert!(error.is_null());
             let runtime = tgskk_runtime_new(
                 dictionary().as_ptr(),
                 c"utf-8".as_ptr(),
                 fixture.user.as_ptr(),
-                &mut error,
+                &raw mut error,
             );
-            let session = tgskk_session_new(runtime, &mut error);
+            let session = tgskk_session_new(runtime, &raw mut error);
             assert_eq!(
                 message((*keys(session, "K a n j i space")).preedit),
                 "▼漢字"
@@ -859,10 +858,10 @@ mod tests {
         unsafe {
             let mut error = ptr::null_mut();
             assert!(
-                tgskk_runtime_new(ptr::null(), c"utf-8".as_ptr(), ptr::null(), &mut error)
+                tgskk_runtime_new(ptr::null(), c"utf-8".as_ptr(), ptr::null(), &raw mut error)
                     .is_null()
             );
-            assert!(!message(error).is_empty());
+            assert_ne!(message(error), "");
             tgskk_string_free(error);
             let invalid = [0xff, 0];
             assert!(
@@ -870,12 +869,12 @@ mod tests {
                     invalid.as_ptr().cast(),
                     c"utf-8".as_ptr(),
                     ptr::null(),
-                    &mut error
+                    &raw mut error
                 )
                 .is_null()
             );
             tgskk_string_free(error);
-            assert!(tgskk_session_new(ptr::null(), &mut error).is_null());
+            assert!(tgskk_session_new(ptr::null(), &raw mut error).is_null());
             tgskk_string_free(error);
             assert!(tgskk_session_reset(ptr::null_mut()).is_null());
             tgskk_session_free(ptr::null_mut());
@@ -913,7 +912,7 @@ mod tests {
             let zenz = tgskk_zenz_new(
                 c"/missing/tgskk-worker".as_ptr(),
                 c"/missing/model".as_ptr(),
-                &mut error,
+                &raw mut error,
             );
             assert!(!zenz.is_null());
             assert!(error.is_null());

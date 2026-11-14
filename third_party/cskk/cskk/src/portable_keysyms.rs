@@ -1,5 +1,6 @@
 pub use xkeysym::Keysym;
 include!("portable_keysyms_data.rs");
+#[cfg(windows)]
 pub const KEYSYM_NO_FLAGS: u32 = 0;
 
 pub fn keysym_from_name(name: &str, _flags: u32) -> Keysym {

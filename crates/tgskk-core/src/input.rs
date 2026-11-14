@@ -21,6 +21,7 @@ pub struct ModeChange {
 }
 
 impl ModeChange {
+    #[must_use]
     pub fn label(&self) -> &'static str {
         mode_label(self.to)
     }
@@ -76,14 +77,17 @@ impl InputSession {
         self.context.set_missing_conversion_provider(provider);
     }
 
+    #[must_use]
     pub fn preview_conversion(&self) -> Option<ConversionRequest> {
         self.context.preview_conversion()
     }
 
+    #[must_use]
     pub fn preview_conversion_limited(&self, limit: usize) -> Option<ConversionRequest> {
         self.context.preview_conversion_limited(limit)
     }
 
+    #[must_use]
     pub fn may_process(&self, event: &CskkKeyEvent) -> bool {
         self.context.will_process(event)
     }
@@ -122,10 +126,12 @@ impl InputSession {
         }
     }
 
+    #[must_use]
     pub fn composition_mode(&self) -> CompositionMode {
         self.context.get_current_composition_mode()
     }
 
+    #[must_use]
     pub fn input_mode(&self) -> InputMode {
         self.context.get_current_input_mode()
     }
@@ -136,6 +142,7 @@ impl InputSession {
         self.outcome(before, false)
     }
 
+    #[must_use]
     pub fn mode_label(&self) -> &'static str {
         mode_label(self.input_mode())
     }
@@ -147,12 +154,14 @@ impl InputSession {
         )
     }
 
+    #[must_use]
     pub fn candidate_cursor(&self) -> Option<usize> {
         self.is_selecting()
             .then(|| cskk::skk_context_get_current_candidate_cursor_position_rs(&self.context).ok())
             .flatten()
     }
 
+    #[must_use]
     pub fn candidates(&self) -> Vec<ConversionCandidate> {
         cskk::skk_context_get_current_candidates_rs(&self.context)
             .iter()
@@ -188,21 +197,25 @@ mod eligibility_tests {
             .join("../../examples/SKK-JISYO.demo.utf8");
         let prefixes: &[&[(u32, u32)]] = &[
             &[],
-            &[(b'l' as u32, 0)],
-            &[(b'L' as u32, 1)],
-            &[(b'q' as u32, 0)],
-            &[(b'q' as u32, 4)],
-            &[(b'k' as u32, 0)],
-            &[(b'K' as u32, 1), (b'a' as u32, 0)],
+            &[(u32::from(b'l'), 0)],
+            &[(u32::from(b'L'), 1)],
+            &[(u32::from(b'q'), 0)],
+            &[(u32::from(b'q'), 4)],
+            &[(u32::from(b'k'), 0)],
+            &[(u32::from(b'K'), 1), (u32::from(b'a'), 0)],
             &[
-                (b'K' as u32, 1),
-                (b'i' as u32, 0),
-                (b's' as u32, 0),
-                (b'h' as u32, 0),
-                (b'a' as u32, 0),
-                (b' ' as u32, 0),
+                (u32::from(b'K'), 1),
+                (u32::from(b'i'), 0),
+                (u32::from(b's'), 0),
+                (u32::from(b'h'), 0),
+                (u32::from(b'a'), 0),
+                (u32::from(b' '), 0),
             ],
-            &[(b'M' as u32, 1), (b'i' as u32, 0), (b' ' as u32, 0)],
+            &[
+                (u32::from(b'M'), 1),
+                (u32::from(b'i'), 0),
+                (u32::from(b' '), 0),
+            ],
         ];
         for prefix in prefixes {
             let mut input = InputSession::open(path.to_str().unwrap(), "utf-8").unwrap();
@@ -211,7 +224,11 @@ mod eligibility_tests {
                     0xff08, 0xff09, 0xff0d, 0xff1b, 0xff51, 0xff52, 0xff53, 0xff54, 0xff55, 0xff56,
                 ]) {
                     let _ = input.reset();
-                    input.process_key(&CskkKeyEvent::from_fcitx_keyevent(b'j' as u32, 4, false));
+                    input.process_key(&CskkKeyEvent::from_fcitx_keyevent(
+                        u32::from(b'j'),
+                        4,
+                        false,
+                    ));
                     for &(key, mods) in *prefix {
                         input.process_key(&CskkKeyEvent::from_fcitx_keyevent(key, mods, false));
                     }

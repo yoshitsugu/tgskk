@@ -80,7 +80,7 @@ impl Server {
                 self.port,
                 encoding.as_ptr(),
                 wait_ms,
-                &mut error,
+                &raw mut error,
             )
         };
         assert!(error.is_null());
@@ -134,12 +134,12 @@ fn permission_is_per_session_defaults_off_and_reset_revokes_it() {
     let mut first = session();
     let mut second = session();
     unsafe {
-        assert_eq!(tgskk_session_set_skkserv(&mut *first, handle), 1);
-        assert_eq!(tgskk_session_set_skkserv(&mut *second, handle), 1);
+        assert_eq!(tgskk_session_set_skkserv(&raw mut *first, handle), 1);
+        assert_eq!(tgskk_session_set_skkserv(&raw mut *second, handle), 1);
         keys(&mut first, "T o u k y o u space");
         assert_eq!(server.count.load(Ordering::SeqCst), 0);
-        tgskk_session_reset(&mut *first);
-        tgskk_session_network_allowed(&mut *first, 1);
+        tgskk_session_reset(&raw mut *first);
+        tgskk_session_network_allowed(&raw mut *first, 1);
         keys(&mut first, "T o u k y o u space");
         assert_eq!(preedit(&first), "▼東京");
         assert_eq!(
@@ -151,7 +151,7 @@ fn permission_is_per_session_defaults_off_and_reset_revokes_it() {
         );
         keys(&mut second, "T o u k y o u space");
         assert!(!preedit(&second).starts_with("▼東京"));
-        tgskk_session_reset(&mut *first);
+        tgskk_session_reset(&raw mut *first);
         keys(&mut first, "T o u k y o u space");
         assert!(!preedit(&first).starts_with("▼東京"));
         assert_eq!(server.count.load(Ordering::SeqCst), 1);
@@ -166,8 +166,8 @@ fn local_hits_bypass_server_with_and_without_global_provider() {
     for global in [false, true] {
         let mut session = session();
         unsafe {
-            tgskk_session_set_skkserv(&mut *session, handle);
-            tgskk_session_network_allowed(&mut *session, 1);
+            tgskk_session_set_skkserv(&raw mut *session, handle);
+            tgskk_session_network_allowed(&raw mut *session, 1);
         }
         if global {
             session
@@ -194,10 +194,10 @@ fn malformed_items_are_filtered_individually_and_handle_lifetime_is_retained() {
     let handle = server.handle("utf-8", 300);
     let mut session = session();
     unsafe {
-        tgskk_session_set_skkserv(&mut *session, handle);
+        tgskk_session_set_skkserv(&raw mut *session, handle);
         tgskk_skkserv_free(handle);
-        tgskk_session_set_zenz(&mut *session, ptr::null());
-        tgskk_session_network_allowed(&mut *session, 1);
+        tgskk_session_set_zenz(&raw mut *session, ptr::null());
+        tgskk_session_network_allowed(&raw mut *session, 1);
     }
     keys(&mut session, "T o u k y o u space");
     assert_eq!(preedit(&session), "▼東京");
@@ -208,7 +208,7 @@ fn malformed_items_are_filtered_individually_and_handle_lifetime_is_retained() {
     );
     assert_eq!(session.candidates[1].0.to_str().unwrap(), "DOS/V");
     unsafe {
-        tgskk_session_set_skkserv(&mut *session, ptr::null());
+        tgskk_session_set_skkserv(&raw mut *session, ptr::null());
     }
     assert_eq!(preedit(&session), "▼東京");
     assert_eq!(session.candidates.len(), 2);
@@ -220,14 +220,14 @@ fn timeout_returns_to_registration_and_late_result_is_cached_without_ui_change()
     let handle = server.handle("utf-8", 10);
     let mut session = session();
     unsafe {
-        tgskk_session_set_skkserv(&mut *session, handle);
-        tgskk_session_network_allowed(&mut *session, 1);
+        tgskk_session_set_skkserv(&raw mut *session, handle);
+        tgskk_session_network_allowed(&raw mut *session, 1);
     }
     let start = Instant::now();
     keys(&mut session, "T o u k y o u space");
     assert!(start.elapsed() < Duration::from_millis(500));
     let before = preedit(&session).to_owned();
-    assert!(session.candidates.is_empty());
+    assert!(session.candidates.is_empty(), "{:?}", session.candidates);
     assert!(before.contains("【"), "expected registration, got {before}");
     let worker = unsafe { &*handle }.worker.clone();
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -237,8 +237,8 @@ fn timeout_returns_to_registration_and_late_result_is_cached_without_ui_change()
     assert!(worker.try_cached("とうきょう").is_some());
     assert_eq!(preedit(&session), before);
     unsafe {
-        tgskk_session_reset(&mut *session);
-        tgskk_session_network_allowed(&mut *session, 1);
+        tgskk_session_reset(&raw mut *session);
+        tgskk_session_network_allowed(&raw mut *session, 1);
     }
     keys(&mut session, "T o u k y o u space");
     assert_eq!(preedit(&session), "▼東京");
@@ -261,8 +261,8 @@ fn custom_euc_jp_uses_skk_okuri_key_and_learns_confirmed_stem() {
     let input = InputSession::with_dictionaries(vec![user.clone()]).unwrap();
     let mut session = Box::new(TgskkSession::new(input).unwrap());
     unsafe {
-        tgskk_session_set_skkserv(&mut *session, handle);
-        tgskk_session_network_allowed(&mut *session, 1);
+        tgskk_session_set_skkserv(&raw mut *session, handle);
+        tgskk_session_network_allowed(&raw mut *session, 1);
     }
     keys(&mut session, "K a K u");
     assert_eq!(preedit(&session), "▼書く");
@@ -327,7 +327,7 @@ fn google_ffi_uses_managed_utf8_helper_and_confirms_okuri_once() {
     let source = executable.with_extension("source");
     std::fs::write(
         &source,
-        r#"#!/usr/bin/env python3
+        r"#!/usr/bin/env python3
 import os, sys
 assert sys.argv[1:] == ['--stdio', '--encoding=utf-8']
 reading = bytearray()
@@ -343,7 +343,7 @@ with open(os.path.join(os.path.dirname(__file__), 'request'), 'wb') as log:
 sys.stdout.buffer.write('1/書く/描く/欠ける/\n'.encode('utf-8'))
 sys.stdout.buffer.flush()
 sys.stdin.buffer.read()
-"#,
+",
     )
     .unwrap();
     // Keep the executable's writer out of other tests' forked processes.
@@ -358,7 +358,7 @@ sys.stdin.buffer.read()
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     let executable = CString::new(executable.to_str().unwrap()).unwrap();
     let mut error = ptr::null_mut();
-    let handle = unsafe { tgskk_skkserv_google_new(executable.as_ptr(), 1000, &mut error) };
+    let handle = unsafe { tgskk_skkserv_google_new(executable.as_ptr(), 1000, &raw mut error) };
     assert!(!handle.is_null());
     assert!(error.is_null());
     // The regular demo dictionary already has かk; use an empty local dictionary
@@ -366,8 +366,8 @@ sys.stdin.buffer.read()
     let mut session =
         Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
     unsafe {
-        tgskk_session_set_skkserv(&mut *session, handle);
-        tgskk_session_network_allowed(&mut *session, 1);
+        tgskk_session_set_skkserv(&raw mut *session, handle);
+        tgskk_session_network_allowed(&raw mut *session, 1);
     }
     assert!(!request_log.exists());
     keys(&mut session, "K a K u");
@@ -398,16 +398,16 @@ fn abi_rejects_invalid_settings_and_nulls_without_network() {
                     port,
                     encoding.as_ptr(),
                     wait,
-                    &mut error
+                    &raw mut error
                 )
                 .is_null()
             );
             assert!(!error.is_null());
-            assert!(!CStr::from_ptr(error).to_bytes().is_empty());
+            assert_ne!(CStr::from_ptr(error).to_bytes(), []);
             tgskk_string_free(error);
         }
         let mut error = ptr::null_mut();
-        assert!(tgskk_skkserv_google_new(ptr::null(), 300, &mut error).is_null());
+        assert!(tgskk_skkserv_google_new(ptr::null(), 300, &raw mut error).is_null());
         tgskk_string_free(error);
         assert_eq!(tgskk_session_network_allowed(ptr::null_mut(), 1), 0);
         assert_eq!(tgskk_session_set_skkserv(ptr::null_mut(), ptr::null()), 0);
@@ -423,20 +423,23 @@ fn zero_wait_missing_lookup_keeps_reading_until_explicit_retry() {
     let mut input =
         Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
     unsafe {
-        tgskk_session_set_skkserv(&mut *input, handle);
-        crate::tgskk_session_defer_missing(&mut *input, 1);
-        tgskk_session_network_allowed(&mut *input, 1);
+        tgskk_session_set_skkserv(&raw mut *input, handle);
+        crate::tgskk_session_defer_missing(&raw mut *input, 1);
+        tgskk_session_network_allowed(&raw mut *input, 1);
     }
     keys(&mut input, "K i s h a space");
-    assert_eq!(unsafe { crate::tgskk_session_lookup_pending(&*input) }, 1);
+    assert_eq!(
+        unsafe { crate::tgskk_session_lookup_pending(&raw const *input) },
+        1
+    );
     assert_eq!(preedit(&input), "▽きしゃ");
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         unsafe {
-            tgskk_session_network_allowed(&mut *input, 1);
+            tgskk_session_network_allowed(&raw mut *input, 1);
         }
         keys(&mut input, "space");
-        if unsafe { crate::tgskk_session_lookup_pending(&*input) } == 0 {
+        if unsafe { crate::tgskk_session_lookup_pending(&raw const *input) } == 0 {
             break;
         }
         assert!(Instant::now() < deadline);
@@ -456,20 +459,23 @@ fn zero_wait_okuri_retains_the_stem_and_suffix_until_explicit_retry() {
     let mut input =
         Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
     unsafe {
-        tgskk_session_set_skkserv(&mut *input, handle);
-        crate::tgskk_session_defer_missing(&mut *input, 1);
-        tgskk_session_network_allowed(&mut *input, 1);
+        tgskk_session_set_skkserv(&raw mut *input, handle);
+        crate::tgskk_session_defer_missing(&raw mut *input, 1);
+        tgskk_session_network_allowed(&raw mut *input, 1);
     }
     keys(&mut input, "K a K u");
-    assert_eq!(unsafe { crate::tgskk_session_lookup_pending(&*input) }, 1);
+    assert_eq!(
+        unsafe { crate::tgskk_session_lookup_pending(&raw const *input) },
+        1
+    );
     assert_eq!(preedit(&input), "▽か*く");
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         unsafe {
-            tgskk_session_network_allowed(&mut *input, 1);
+            tgskk_session_network_allowed(&raw mut *input, 1);
         }
         keys(&mut input, "space");
-        if unsafe { crate::tgskk_session_lookup_pending(&*input) } == 0 {
+        if unsafe { crate::tgskk_session_lookup_pending(&raw const *input) } == 0 {
             break;
         }
         assert_eq!(preedit(&input), "▽か*く");
@@ -498,9 +504,9 @@ fn zero_wait_okuri_kana_confirmation_preserves_all_typed_kana() {
         let mut input =
             Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
         unsafe {
-            tgskk_session_set_skkserv(&mut *input, handle);
-            crate::tgskk_session_defer_missing(&mut *input, 1);
-            tgskk_session_network_allowed(&mut *input, 1);
+            tgskk_session_set_skkserv(&raw mut *input, handle);
+            crate::tgskk_session_defer_missing(&raw mut *input, 1);
+            tgskk_session_network_allowed(&raw mut *input, 1);
         }
         keys(&mut input, "K a K u");
         assert_eq!(preedit(&input), "▽か*く");
@@ -522,12 +528,15 @@ fn zero_wait_legacy_host_still_enters_registration_without_opt_in() {
     let mut input =
         Box::new(TgskkSession::new(InputSession::with_dictionaries(vec![]).unwrap()).unwrap());
     unsafe {
-        tgskk_session_set_skkserv(&mut *input, handle);
-        tgskk_session_network_allowed(&mut *input, 1);
+        tgskk_session_set_skkserv(&raw mut *input, handle);
+        tgskk_session_network_allowed(&raw mut *input, 1);
     }
     keys(&mut input, "K i s h a space");
     assert_eq!(preedit(&input), "▼きしゃ【】");
-    assert_eq!(unsafe { crate::tgskk_session_lookup_pending(&*input) }, 1);
+    assert_eq!(
+        unsafe { crate::tgskk_session_lookup_pending(&raw const *input) },
+        1
+    );
     unsafe {
         tgskk_skkserv_free(handle);
     }

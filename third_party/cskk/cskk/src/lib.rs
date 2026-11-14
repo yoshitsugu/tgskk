@@ -1979,7 +1979,7 @@ mod unit_tests {
         cskkcontext.process_key_event(&CskkKeyEvent::from_string_representation("A").unwrap());
         let result = cskkcontext.get_preedit_detail();
         assert_eq!(result.len(), 1);
-        let top_state = result.get(0).unwrap();
+        let top_state = result.first().unwrap();
         assert!(matches!(top_state, CskkStateInfo::PreComposition(_)));
         assert_eq!(
             *top_state,

@@ -1,0 +1,45 @@
+name: Rust quality
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * 1'
+permissions:
+  contents: read
+jobs:
+  lint:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev pkg-config
+      - name: Install lint toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+      - name: Check formatting and Clippy for all workspaces
+        shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+        run: bash scripts/lint.sh
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install audit tools
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          cargo +1.99.1 install cargo-deny --version 0.18.9 --locked
+      - name: Audit all lockfiles, features and platforms
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+        run: bash scripts/check-dependencies.sh

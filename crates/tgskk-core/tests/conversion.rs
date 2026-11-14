@@ -61,7 +61,7 @@ fn ranking_changes_order_without_changing_candidates_or_annotations() {
         ["感じ", "幹事", "漢字"]
     );
     assert_eq!(engine.commit().unwrap().annotation.as_deref(), Some("感覚"));
-    assert!(engine.candidates().is_empty());
+    assert_eq!(engine.candidates(), []);
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn cancellation_commit_and_dictionary_reload_invalidate_results() {
 fn empty_lookup_and_disabled_cache_work() {
     let mut engine = Engine::new(Dictionary::default(), 0);
     engine.begin("unknown", "");
-    assert!(engine.candidates().is_empty());
+    assert_eq!(engine.candidates(), []);
     assert!(engine.commit().is_none());
     assert!(engine.lookup("unknown").is_empty());
 }

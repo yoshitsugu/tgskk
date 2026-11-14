@@ -54,6 +54,10 @@ const CRASH: &str = "sys.exit(0)";
 const TRAILING: &str = r#"sys.stdout.buffer.write(b"1/a/\nEXTRA"); sys.stdout.buffer.flush()"#;
 const HUNG: &str = "time.sleep(30)";
 
+#[expect(
+    clippy::unnecessary_debug_formatting,
+    reason = "Python source needs a quoted and escaped path literal."
+)]
 fn write_script(dir: &Path, name: &str, log: &Path, action: &str) -> PathBuf {
     let path = dir.join(name);
     let script = format!(
@@ -156,8 +160,7 @@ fn process_alive(pid: i32) -> bool {
         .arg("-0")
         .arg(pid.to_string())
         .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .is_ok_and(|status| status.success())
 }
 
 fn wait_error(worker: &Worker, timeout: Duration) -> String {

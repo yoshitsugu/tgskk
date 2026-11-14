@@ -3,15 +3,19 @@ name = "tgskk-ffi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [lib]
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-tgskk-core = { path = "../tgskk-core" }
-tgskk-skkserv = { path = "../tgskk-skkserv" }
+tgskk-core = { path = "../tgskk-core", version = "0.1.0" }
+tgskk-skkserv = { path = "../tgskk-skkserv", version = "0.1.0" }
 
-tgskk-zenz = { path = "../tgskk-zenz" }
+tgskk-zenz = { path = "../tgskk-zenz", version = "0.1.0" }
 
 [dev-dependencies]
 tempfile = "3.3"
+
+[lints]
+workspace = true

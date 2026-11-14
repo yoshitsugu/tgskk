@@ -189,12 +189,12 @@ enum LookupFailure {
 }
 
 impl LookupFailure {
-    fn from_client(error: ClientError) -> Self {
+    fn from_client(error: &ClientError) -> Self {
         match error {
             ClientError::Timeout => Self::Timeout,
             ClientError::Io(_) => Self::Io,
-            ClientError::Encoding(err) => Self::Encoding(err),
-            ClientError::Protocol(err) => Self::Protocol(err),
+            ClientError::Encoding(err) => Self::Encoding(*err),
+            ClientError::Protocol(err) => Self::Protocol(*err),
         }
     }
 }
@@ -265,7 +265,7 @@ impl Worker {
         let background_config = config.clone();
         thread::Builder::new()
             .name("tgskk-skkserv".into())
-            .spawn(move || supervise(background, background_config))?;
+            .spawn(move || supervise(&background, &background_config))?;
         Ok(Self(Arc::new(Service { queue, config })))
     }
 
@@ -324,6 +324,7 @@ impl Worker {
 
     /// Returns the cached result without queueing, network work or waiting.
     /// Expired entries count as misses; a cached negative miss is `Some(empty)`.
+    #[must_use]
     pub fn try_cached(&self, reading: &str) -> Option<Vec<Candidate>> {
         let mut state = match self.0.queue.state.try_lock() {
             Ok(guard) => guard,
@@ -334,6 +335,7 @@ impl Worker {
     }
 
     /// Returns one diagnostic at a time without blocking on contention.
+    #[must_use]
     pub fn take_error(&self) -> Option<String> {
         match self.0.queue.diagnostic.try_lock() {
             Ok(mut slot) => slot.take(),
@@ -371,12 +373,12 @@ fn clear_diagnostic(queue: &Queue) {
     *slot = None;
 }
 
-fn supervise(queue: Arc<Queue>, config: Config) {
-    let result = catch_unwind(AssertUnwindSafe(|| worker_main(&queue, &config)));
+fn supervise(queue: &Queue, config: &Config) {
+    let result = catch_unwind(AssertUnwindSafe(|| worker_main(queue, config)));
     if result.is_err() {
-        set_diagnostic(&queue, "SKK server worker stopped after a panic".into());
+        set_diagnostic(queue, "SKK server worker stopped after a panic".into());
         queue.stopped.store(true, Ordering::Release);
-        let _guard = lock_state(&queue);
+        let _guard = lock_state(queue);
         queue.wake.notify_all();
     }
 }
@@ -513,7 +515,7 @@ fn tcp_lookup(
         match fetch(addr, reading, encoding, deadline) {
             Ok(candidates) => return Ok(candidates),
             Err(ClientError::Timeout) => return Err(LookupFailure::Timeout),
-            Err(error) => last = Some(LookupFailure::from_client(error)),
+            Err(error) => last = Some(LookupFailure::from_client(&error)),
         }
     }
     Err(last.unwrap_or(LookupFailure::Dns))
@@ -552,7 +554,7 @@ impl GoogleHelper {
             deadline,
             TrailingData::Reject,
         )
-        .map_err(LookupFailure::from_client)
+        .map_err(|error| LookupFailure::from_client(&error))
     }
 }
 
@@ -659,7 +661,12 @@ mod tests {
         cache.insert("よみ".into(), vec![text("読")], base);
 
         assert_eq!(
-            cache.get("よみ", base + POSITIVE_TTL - Duration::from_millis(1)),
+            cache.get(
+                "よみ",
+                (base + POSITIVE_TTL)
+                    .checked_sub(Duration::from_millis(1))
+                    .unwrap()
+            ),
             Some(vec![text("読")])
         );
         assert_eq!(cache.get("よみ", base + POSITIVE_TTL), None);
@@ -672,7 +679,12 @@ mod tests {
         cache.insert("なし".into(), Vec::new(), base);
 
         assert_eq!(
-            cache.get("なし", base + NEGATIVE_TTL - Duration::from_millis(1)),
+            cache.get(
+                "なし",
+                (base + NEGATIVE_TTL)
+                    .checked_sub(Duration::from_millis(1))
+                    .unwrap()
+            ),
             Some(Vec::new())
         );
         assert_eq!(cache.get("なし", base + NEGATIVE_TTL), None);

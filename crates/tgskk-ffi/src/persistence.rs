@@ -97,6 +97,7 @@ unsafe extern "C" fn tgskk_runtime_saver_new(
             let worker = std::thread::Builder::new()
                 .name("tgskk-dictionary-writer".into())
                 .spawn(move || {
+                    #[expect(clippy::redundant_closure_for_method_calls, reason = "The seed type is not re-exported by tgskk-core, so its method cannot be named here.")]
                     let mut writers: Vec<_> = seeds.into_iter().map(|seed| seed.writer()).collect();
                     while let Ok(command) = receive.recv() {
                         let Command::Save(updates) = command else {
@@ -172,7 +173,7 @@ mod tests {
     use std::time::{Duration, Instant};
     fn key(session: *mut TgskkSession, text: &str) {
         for c in text.chars() {
-            let modifiers = if c.is_ascii_uppercase() { 1 } else { 0 };
+            let modifiers = u32::from(c.is_ascii_uppercase());
             assert!(!unsafe { tgskk_session_key(session, c as u32, modifiers, 0) }.is_null());
         }
     }
@@ -180,7 +181,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             let mut error = ptr::null_mut();
-            assert_eq!(unsafe { tgskk_saver_tick(saver, &mut error) }, 1);
+            assert_eq!(unsafe { tgskk_saver_tick(saver, &raw mut error) }, 1);
             assert!(error.is_null());
             if unsafe { tgskk_saver_idle(saver) } != 0 {
                 break;
@@ -206,29 +207,29 @@ mod tests {
                 dictionary.as_ptr(),
                 encoding.as_ptr(),
                 user_arg.as_ptr(),
-                &mut error,
+                &raw mut error,
             )
         };
         assert!(!runtime.is_null());
-        let saver = unsafe { tgskk_runtime_saver_new(runtime, &mut error) };
+        let saver = unsafe { tgskk_runtime_saver_new(runtime, &raw mut error) };
         assert!(!saver.is_null());
-        let session = unsafe { tgskk_session_new(runtime, &mut error) };
+        let session = unsafe { tgskk_session_new(runtime, &raw mut error) };
         finish(saver);
         key(session, "Kanji ");
         unsafe {
             tgskk_session_key(session, 0xff0d, 0, 0);
         }
         assert_eq!(unsafe { tgskk_saver_idle(saver) }, 0);
-        assert_eq!(unsafe { tgskk_saver_tick(saver, &mut error) }, 1);
+        assert_eq!(unsafe { tgskk_saver_tick(saver, &raw mut error) }, 1);
         // Learning after the submitted batch must survive its acknowledgement.
         key(session, "Kisha ");
         unsafe {
             tgskk_session_key(session, 0xff0d, 0, 0);
         }
         finish(saver);
-        let saved = std::fs::read_to_string(&user).unwrap();
-        assert!(saved.contains("かんじ /漢字;文字/"), "{saved}");
-        assert!(saved.contains("きしゃ /記者/"), "{saved}");
+        let contents = std::fs::read_to_string(&user).unwrap();
+        assert!(contents.contains("かんじ /漢字;文字/"), "{contents}");
+        assert!(contents.contains("きしゃ /記者/"), "{contents}");
         // A directory at the backup path makes the atomic save fail.
         let backup = user.with_file_name("user.BAK");
         std::fs::remove_file(&backup).unwrap();
@@ -239,7 +240,7 @@ mod tests {
         }
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            let success = unsafe { tgskk_saver_tick(saver, &mut error) };
+            let success = unsafe { tgskk_saver_tick(saver, &raw mut error) };
             if success == 0 {
                 break;
             }
@@ -250,7 +251,7 @@ mod tests {
         unsafe {
             tgskk_string_free(error);
         }
-        assert_eq!(std::fs::read_to_string(&user).unwrap(), saved);
+        assert_eq!(std::fs::read_to_string(&user).unwrap(), contents);
         std::fs::remove_dir(&backup).unwrap();
         finish(saver);
         assert!(

@@ -14,7 +14,25 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
+rust-version = "1.88"
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+mem_forget = "deny"
+exit = "deny"
+# API documentation follows the error types; line count is not a complexity measure.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+too_many_lines = "allow"

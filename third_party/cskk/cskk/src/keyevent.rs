@@ -493,7 +493,7 @@ mod tests {
     fn deserialize_seq() {
         let result = CskkKeyEvent::deserialize_seq("a b c").unwrap();
         assert_eq!(
-            result.get(0).unwrap(),
+            result.first().unwrap(),
             &CskkKeyEvent::from_string_representation("a").unwrap()
         );
         assert_eq!(

@@ -76,6 +76,9 @@ bash scripts/check.sh
 bash scripts/check-fcitx5.sh
 ```
 
+Rustの静的検査は`bash scripts/lint.sh`、依存監査は`cargo install cargo-deny --version 0.18.9 --locked`の後に`bash scripts/check-dependencies.sh`で実行できます。
+CIの静的検査にはRust 1.99.1を使用し、ビルドの最低対応版は1.88のままです。
+
 実モデルを用意した環境では`bash scripts/check-zenz.sh`で結合テストと採点・入力処理の測定を実行できます。
 
 - [設計](docs/architecture.md)

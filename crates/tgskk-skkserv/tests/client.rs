@@ -86,7 +86,7 @@ fn read_request(stream: &mut TcpStream) -> Vec<u8> {
                     break;
                 }
             }
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => break,
         }
     }
