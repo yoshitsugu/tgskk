@@ -55,6 +55,7 @@ void serve(const std::shared_ptr<Client> &client,
         break;
       q.deadline = std::min<uint64_t>(
           q.deadline, now + (q.op == Op::Hello ? 100 : keyBudget));
+      const auto deadline = q.deadline;
       {
         std::lock_guard lock(client->mutex);
         client->ready = false;
@@ -68,7 +69,7 @@ void serve(const std::shared_ptr<Client> &client,
       }
       std::unique_lock lock(client->mutex);
       const auto waiting = monotonicMillis();
-      const auto remaining = q.deadline > waiting ? q.deadline - waiting : 0;
+      const auto remaining = deadline > waiting ? deadline - waiting : 0;
       if (!client->wake.wait_for(lock, std::chrono::milliseconds(remaining),
                                  [&] {
                                    return client->ready || !client->live ||
@@ -78,7 +79,7 @@ void serve(const std::shared_ptr<Client> &client,
         break;
       auto reply = std::move(client->reply);
       lock.unlock();
-      if (!client->channel.write(reply, q.deadline))
+      if (!client->channel.write(reply, deadline))
         break;
     }
   } catch (
