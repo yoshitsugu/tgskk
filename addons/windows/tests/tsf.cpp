@@ -667,8 +667,6 @@ int run(int argc, char **argv) {
     if (dispatch)
       pump();
   };
-  setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1);
-  setControl(conversionCompartmentId, 9);
   ITfDocumentMgr *document = nullptr;
   require(SUCCEEDED(manager->CreateDocumentMgr(&document)), "document");
   ITfDocumentMgr *emptyDocument = nullptr;
@@ -742,6 +740,10 @@ int run(int argc, char **argv) {
   require(SUCCEEDED(activated), "profile activation");
   pump();
   require(SUCCEEDED(manager->SetFocus(document)), "focus activated document");
+  pump();
+  // Profile activation restores Windows IME state; set the fixture afterwards.
+  setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1);
+  setControl(conversionCompartmentId, IME_CMODE_NATIVE | IME_CMODE_FULLSHAPE);
   ITfKeystrokeMgr *keys = nullptr;
   require(SUCCEEDED(manager->QueryInterface(IID_ITfKeystrokeMgr,
                                             reinterpret_cast<void **>(&keys))),
