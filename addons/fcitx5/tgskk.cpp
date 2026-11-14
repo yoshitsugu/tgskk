@@ -63,7 +63,8 @@ struct EncodingConstrain {
 
 struct SkkservModeConstrain {
   using Type = std::string;
-  static constexpr std::array<const char *, 3> values{"Google", "Custom", "Disabled"};
+  static constexpr std::array<const char *, 3> values{"Google", "Custom",
+                                                      "Disabled"};
   bool check(const std::string &value) const {
     return std::find(values.begin(), values.end(), value) != values.end();
   }
@@ -82,19 +83,27 @@ FCITX_CONFIGURATION(
     Option<std::string, EncodingConstrain> encoding{
         this, "Encoding", "Dictionary encoding", "euc-jp"};
     Option<int, IntConstrain> inlineCandidates{
-        this, "InlineCandidates", "Candidates before showing the list", static_cast<int>(tgskk::defaultInlineCandidates),
-        IntConstrain(0)};
+        this, "InlineCandidates", "Candidates before showing the list",
+        static_cast<int>(tgskk::defaultInlineCandidates), IntConstrain(0)};
     Option<bool> modeIndicator{this, "ModeIndicator",
                                "Show mode near the cursor", true};
     Option<std::string, SkkservModeConstrain> skkservMode{
-        this, "SkkservMode", "Online candidates when no local candidate exists", "Google"};
-    Option<std::string> skkservHost{this, "SkkservHost", "Custom SKK server host", "127.0.0.1"};
-    Option<int, IntConstrain> skkservPort{this, "SkkservPort", "Custom SKK server port", 1178, IntConstrain(1, 65535)};
+        this, "SkkservMode", "Online candidates when no local candidate exists",
+        "Google"};
+    Option<std::string> skkservHost{this, "SkkservHost",
+                                    "Custom SKK server host", "127.0.0.1"};
+    Option<int, IntConstrain> skkservPort{this, "SkkservPort",
+                                          "Custom SKK server port", 1178,
+                                          IntConstrain(1, 65535)};
     Option<std::string, EncodingConstrain> skkservEncoding{
         this, "SkkservEncoding", "Custom SKK server encoding", "euc-jp"};
-    Option<int, IntConstrain> skkservTimeoutMs{this, "SkkservTimeoutMs", "Wait for missing candidates (ms)", 300, IntConstrain(0, 1000)};
-    Option<bool> zenzEnabled{this, "ZenzEnabled", "Use local Zenz ranking", true};
-    Option<std::string> zenzModel{this, "ZenzModel", "Zenz v3 model path", TGSKK_ZENZ_MODEL};);
+    Option<int, IntConstrain> skkservTimeoutMs{
+        this, "SkkservTimeoutMs", "Wait for missing candidates (ms)", 300,
+        IntConstrain(0, 1000)};
+    Option<bool> zenzEnabled{this, "ZenzEnabled", "Use local Zenz ranking",
+                             true};
+    Option<std::string> zenzModel{this, "ZenzModel", "Zenz v3 model path",
+                                  TGSKK_ZENZ_MODEL};);
 
 using Zenz = std::unique_ptr<TgskkZenz, decltype(&tgskk_zenz_free)>;
 using Skkserv = std::unique_ptr<TgskkSkkserv, decltype(&tgskk_skkserv_free)>;
@@ -108,11 +117,14 @@ std::string takeError(char *message) {
 }
 
 std::string modelPath(const std::string &configured) {
-  if (configured != TGSKK_ZENZ_MODEL) { return configured; }
+  if (configured != TGSKK_ZENZ_MODEL) {
+    return configured;
+  }
   const auto userModel = tgskk::userDataDirectory() / "tgskk" /
                          std::filesystem::path(TGSKK_ZENZ_MODEL).filename();
   std::error_code error;
-  return std::filesystem::is_regular_file(userModel, error) ? userModel.string() : configured;
+  return std::filesystem::is_regular_file(userModel, error) ? userModel.string()
+                                                            : configured;
 }
 
 class TgskkState : public InputContextProperty {
@@ -125,7 +137,9 @@ public:
   bool observed = false;
   bool sensitive = false;
   void forgetContext() {
-    left.clear(); observedLeft.clear(); observed = false;
+    left.clear();
+    observedLeft.clear();
+    observed = false;
   }
 };
 
@@ -190,8 +204,10 @@ public:
     if (view && view->selecting && list) {
       // Mouse wheel paging may move the UI cursor before a key reaches us.
       const auto cursor = list->globalCursorIndex();
-      if (cursor >= 0 && state->candidateOffset + static_cast<size_t>(cursor) != view->selected) {
-        view = tgskk_session_choose(session, state->candidateOffset + static_cast<size_t>(cursor));
+      if (cursor >= 0 && state->candidateOffset + static_cast<size_t>(cursor) !=
+                             view->selected) {
+        view = tgskk_session_choose(session, state->candidateOffset +
+                                                 static_cast<size_t>(cursor));
         if (!view) {
           failed(ic);
           event.filterAndAccept();
@@ -215,20 +231,26 @@ public:
       }
     }
     if (view && view->selecting && !list &&
-        (event.key().check(Key(FcitxKey_Page_Down)) || event.key().check(Key(FcitxKey_Page_Up)))) {
+        (event.key().check(Key(FcitxKey_Page_Down)) ||
+         event.key().check(Key(FcitxKey_Page_Up)))) {
       // Keep page navigation inside the composition while the list is hidden.
       if (event.key().check(Key(FcitxKey_Page_Down))) {
-        const auto target = tgskk::candidatePageMove(view->candidate_count, view->selected,
-            static_cast<size_t>(*config_.inlineCandidates), true).index;
+        const auto target =
+            tgskk::candidatePageMove(
+                view->candidate_count, view->selected,
+                static_cast<size_t>(*config_.inlineCandidates), true)
+                .index;
         render(ic, tgskk_session_choose(session, target));
       }
       event.filterAndAccept();
       return;
     }
     if (view && view->selecting &&
-        (event.key().check(Key(FcitxKey_Down)) || event.key().check(Key(FcitxKey_Up)))) {
-      const auto target = tgskk::candidateStep(view->candidate_count, view->selected,
-          event.key().check(Key(FcitxKey_Down)));
+        (event.key().check(Key(FcitxKey_Down)) ||
+         event.key().check(Key(FcitxKey_Up)))) {
+      const auto target =
+          tgskk::candidateStep(view->candidate_count, view->selected,
+                               event.key().check(Key(FcitxKey_Down)));
       if (target != view->selected) {
         render(ic, tgskk_session_choose(session, target));
       }
@@ -265,7 +287,8 @@ public:
       } else if (!tgskk_session_set_zenz(state->session.get(), zenz_.get())) {
         state->session.reset();
         error_ = "Could not attach Zenz worker";
-      } else if (!tgskk_session_set_skkserv(state->session.get(), skkserv_.get())) {
+      } else if (!tgskk_session_set_skkserv(state->session.get(),
+                                            skkserv_.get())) {
         state->session.reset();
         error_ = "Could not attach SKK server worker";
       }
@@ -330,7 +353,8 @@ public:
   }
 
 private:
-  void showInformation(InputContext *ic, const std::string &message, [[maybe_unused]] bool mode = false) {
+  void showInformation(InputContext *ic, const std::string &message,
+                       [[maybe_unused]] bool mode = false) {
 #if TGSKK_FCITX_HAS_CUSTOM_INFORMATION
     instance_->showCustomInputMethodInformation(ic, message);
 #else
@@ -345,14 +369,15 @@ private:
   }
 
   void movePage(InputContext *ic, const TgskkView *view,
-                const CommonCandidateList &list, bool forward, bool registerAtEnd) {
+                const CommonCandidateList &list, bool forward,
+                bool registerAtEnd) {
     auto *state = ic->propertyFor(&factory_);
     auto *session = state->session.get();
     const auto page = static_cast<size_t>(list.currentPage());
     const auto pageSize = static_cast<size_t>(list.pageSize());
-    const auto move = tgskk::candidatePageMove(view->candidate_count,
-        state->candidateOffset + page * pageSize, state->candidateOffset,
-        forward, registerAtEnd, pageSize);
+    const auto move = tgskk::candidatePageMove(
+        view->candidate_count, state->candidateOffset + page * pageSize,
+        state->candidateOffset, forward, registerAtEnd, pageSize);
     if (move.kind == tgskk::CandidateMoveKind::Stay)
       return;
     view = tgskk_session_choose(session, move.index);
@@ -365,15 +390,19 @@ private:
 
   static std::string suffix(const std::string &text) {
     const auto length = utf8::length(text);
-    return length > 96 ? text.substr(utf8::ncharByteLength(text.begin(), length - 96)) : text;
+    return length > 96
+               ? text.substr(utf8::ncharByteLength(text.begin(), length - 96))
+               : text;
   }
 
   void updateContext(InputContext *ic) {
     auto *state = ic->propertyFor(&factory_);
     const auto &surrounding = ic->surroundingText();
     const auto caps = ic->capabilityFlags();
-    state->sensitive = caps.testAny(CapabilityFlag::PasswordOrSensitive) || caps.test(CapabilityFlag::Disable);
-    const bool selection = surrounding.isValid() && surrounding.cursor() != surrounding.anchor();
+    state->sensitive = caps.testAny(CapabilityFlag::PasswordOrSensitive) ||
+                       caps.test(CapabilityFlag::Disable);
+    const bool selection =
+        surrounding.isValid() && surrounding.cursor() != surrounding.anchor();
     const bool allowed = !state->sensitive && !selection && ic->hasFocus();
     tgskk_session_network_allowed(state->session.get(), allowed);
     if (!allowed || !*config_.zenzEnabled) {
@@ -386,7 +415,8 @@ private:
     }
     if (surrounding.isValid()) {
       const auto left = suffix(surrounding.text().substr(
-          0, utf8::ncharByteLength(surrounding.text().begin(), surrounding.cursor())));
+          0, utf8::ncharByteLength(surrounding.text().begin(),
+                                   surrounding.cursor())));
       // Applications may acknowledge commitString after subsequent keys arrive.
       // An unchanged snapshot must not discard our newer local commits.
       if (!state->observed || state->observedLeft != left) {
@@ -399,18 +429,22 @@ private:
   }
 
   void configure(const TgskkConfig &next, bool persist) {
-    const bool replaceServer = !configured_ || *next.skkservMode != *config_.skkservMode ||
-        *next.skkservHost != *config_.skkservHost || *next.skkservPort != *config_.skkservPort ||
-        *next.skkservEncoding != *config_.skkservEncoding || *next.skkservTimeoutMs != *config_.skkservTimeoutMs;
+    const bool replaceServer =
+        !configured_ || *next.skkservMode != *config_.skkservMode ||
+        *next.skkservHost != *config_.skkservHost ||
+        *next.skkservPort != *config_.skkservPort ||
+        *next.skkservEncoding != *config_.skkservEncoding ||
+        *next.skkservTimeoutMs != *config_.skkservTimeoutMs;
     Skkserv server(nullptr, tgskk_skkserv_free);
     if (replaceServer && *next.skkservMode != "Disabled") {
       char *error = nullptr;
       if (*next.skkservMode == "Google") {
-        server.reset(tgskk_skkserv_google_new(TGSKK_GOOGLE_SKKSERV, *next.skkservTimeoutMs, &error));
+        server.reset(tgskk_skkserv_google_new(TGSKK_GOOGLE_SKKSERV,
+                                              *next.skkservTimeoutMs, &error));
       } else if (*next.skkservMode == "Custom") {
-        server.reset(tgskk_skkserv_custom_new(next.skkservHost->c_str(),
-            static_cast<uint16_t>(*next.skkservPort), next.skkservEncoding->c_str(),
-            *next.skkservTimeoutMs, &error));
+        server.reset(tgskk_skkserv_custom_new(
+            next.skkservHost->c_str(), static_cast<uint16_t>(*next.skkservPort),
+            next.skkservEncoding->c_str(), *next.skkservTimeoutMs, &error));
       }
       if (!server) {
         error_ = error ? takeError(error) : "Invalid SKK server mode";
@@ -426,9 +460,7 @@ private:
       if (!saveRuntime()) {
         return;
       }
-      auto userPath =
-          tgskk::userDataDirectory() /
-          "tgskk/SKK-JISYO.user";
+      auto userPath = tgskk::userDataDirectory() / "tgskk/SKK-JISYO.user";
       std::error_code ec;
       std::filesystem::create_directories(userPath.parent_path(), ec);
       char *error = nullptr;
@@ -452,16 +484,19 @@ private:
       FCITX_ERROR() << "tgskk: " << error_;
       return;
     }
-    const bool replaceZenz = !configured_ || *next.zenzEnabled != *config_.zenzEnabled ||
+    const bool replaceZenz = !configured_ ||
+                             *next.zenzEnabled != *config_.zenzEnabled ||
                              *next.zenzModel != *config_.zenzModel;
-    const bool changeCandidateDisplay = *next.inlineCandidates != *config_.inlineCandidates;
+    const bool changeCandidateDisplay =
+        *next.inlineCandidates != *config_.inlineCandidates;
     config_ = next;
     configured_ = true;
     if (replaceServer) {
       skkserv_ = std::move(server);
-      instance_->inputContextManager().foreach([this](InputContext *ic) {
+      instance_->inputContextManager().foreach ([this](InputContext *ic) {
         auto *state = ic->propertyFor(&factory_);
-        if (state->session && !tgskk_session_set_skkserv(state->session.get(), skkserv_.get())) {
+        if (state->session &&
+            !tgskk_session_set_skkserv(state->session.get(), skkserv_.get())) {
           failed(ic);
         }
         return true;
@@ -473,12 +508,15 @@ private:
         char *error = nullptr;
         const auto model = modelPath(*config_.zenzModel);
         zenz_.reset(tgskk_zenz_new(TGSKK_ZENZ_WORKER, model.c_str(), &error));
-        if (!zenz_) { FCITX_ERROR() << "tgskk: " << takeError(error); }
+        if (!zenz_) {
+          FCITX_ERROR() << "tgskk: " << takeError(error);
+        }
       }
       instance_->inputContextManager().foreach ([this](InputContext *ic) {
         auto *state = ic->propertyFor(&factory_);
         state->forgetContext();
-        if (state->session && !tgskk_session_set_zenz(state->session.get(), zenz_.get())) {
+        if (state->session &&
+            !tgskk_session_set_zenz(state->session.get(), zenz_.get())) {
           failed(ic);
         }
         return true;
@@ -554,11 +592,14 @@ private:
     auto &panel = ic->inputPanel();
     panel.reset();
     if (commit && *view->committed) {
-      if (!state->sensitive) { state->left = suffix(state->left + view->committed); }
+      if (!state->sensitive) {
+        state->left = suffix(state->left + view->committed);
+      }
       ic->commitString(view->committed);
     }
     const auto inlineCount = static_cast<size_t>(*config_.inlineCandidates);
-    const bool showCandidates = view->selecting && view->candidate_count && view->selected >= inlineCount;
+    const bool showCandidates = view->selecting && view->candidate_count &&
+                                view->selected >= inlineCount;
     state->candidateOffset = showCandidates ? inlineCount : 0;
     if (*config_.zenzEnabled && !state->sensitive && showCandidates) {
       if (view->zenz_applied) {

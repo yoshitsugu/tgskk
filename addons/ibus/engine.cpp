@@ -136,8 +136,8 @@ static void render(IBusEngine *engine, const TgskkView *view) {
       view->selected >= static_cast<size_t>(resources->config.inlineCandidates);
   s.offset = s.list ? resources->config.inlineCandidates : 0;
   if (s.list) {
-    auto *table =
-        ibus_lookup_table_new(tgskk::candidatePageSize, view->selected - s.offset, TRUE, FALSE);
+    auto *table = ibus_lookup_table_new(tgskk::candidatePageSize,
+                                        view->selected - s.offset, TRUE, FALSE);
     ibus_lookup_table_set_orientation(table, IBUS_ORIENTATION_VERTICAL);
     for (size_t i = s.offset; i < view->candidate_count; ++i) {
       std::string candidate = tgskk_candidate_text(s.session, i);
@@ -204,8 +204,10 @@ static void page(IBusEngine *engine, bool forward, bool registration) {
   if (!v || !v->selecting || !v->candidate_count) {
     return;
   }
-  const auto move = tgskk::candidatePageMove(v->candidate_count, v->selected,
-      static_cast<size_t>(resources->config.inlineCandidates), forward, registration);
+  const auto move = tgskk::candidatePageMove(
+      v->candidate_count, v->selected,
+      static_cast<size_t>(resources->config.inlineCandidates), forward,
+      registration);
   if (move.kind == tgskk::CandidateMoveKind::Stay)
     return;
   v = tgskk_session_choose(s.session, move.index);
@@ -287,14 +289,15 @@ static gboolean key(IBusEngine *engine, guint symbol, guint, guint modifiers) {
       return TRUE;
     }
     if (symbol == IBUS_KEY_Down || symbol == IBUS_KEY_Up) {
-      const auto target =
-          tgskk::candidateStep(v->candidate_count, v->selected, symbol == IBUS_KEY_Down);
+      const auto target = tgskk::candidateStep(v->candidate_count, v->selected,
+                                               symbol == IBUS_KEY_Down);
       render(engine, tgskk_session_choose(s.session, target));
       return TRUE;
     }
-    if (s.list && symbol >= IBUS_KEY_1 && symbol < IBUS_KEY_1 + tgskk::candidatePageSize) {
-      const auto index =
-          tgskk::candidatePageStart(v->selected, s.offset) + symbol - IBUS_KEY_1;
+    if (s.list && symbol >= IBUS_KEY_1 &&
+        symbol < IBUS_KEY_1 + tgskk::candidatePageSize) {
+      const auto index = tgskk::candidatePageStart(v->selected, s.offset) +
+                         symbol - IBUS_KEY_1;
       if (index < v->candidate_count) {
         render(engine, tgskk_session_select(s.session, index));
       }

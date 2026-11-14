@@ -92,23 +92,31 @@ public:
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    FCITX_ASSERT(bind(socket_, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+    FCITX_ASSERT(bind(socket_, reinterpret_cast<sockaddr *>(&address),
+                      sizeof(address)) == 0);
     socklen_t size = sizeof(address);
-    FCITX_ASSERT(getsockname(socket_, reinterpret_cast<sockaddr *>(&address), &size) == 0);
+    FCITX_ASSERT(getsockname(socket_, reinterpret_cast<sockaddr *>(&address),
+                             &size) == 0);
     port = ntohs(address.sin_port);
     FCITX_ASSERT(listen(socket_, 4) == 0);
     thread_ = std::thread([this] {
       while (!stop_) {
         pollfd ready{socket_, POLLIN, 0};
-        if (poll(&ready, 1, 10) <= 0) { continue; }
+        if (poll(&ready, 1, 10) <= 0) {
+          continue;
+        }
         int client = accept4(socket_, nullptr, nullptr, SOCK_CLOEXEC);
-        if (client < 0) { continue; }
+        if (client < 0) {
+          continue;
+        }
         ++requests;
         timeval timeout{1, 0};
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         char byte = 0;
         size_t count = 0;
-        while (count++ < 1026 && recv(client, &byte, 1, 0) == 1 && byte != ' ') {}
+        while (count++ < 1026 && recv(client, &byte, 1, 0) == 1 &&
+               byte != ' ') {
+        }
         const std::string response = "1/東京/\n";
         ::send(client, response.data(), response.size(), MSG_NOSIGNAL);
         close(client);
@@ -122,13 +130,15 @@ public:
   }
   int port = 0;
   std::atomic<int> requests{0};
+
 private:
   int socket_;
   std::atomic<bool> stop_{false};
   std::thread thread_;
 };
 
-void verifySkkserv(Instance &instance, InputMethodEngine &engine, FocusGroup &focus) {
+void verifySkkserv(Instance &instance, InputMethodEngine &engine,
+                   FocusGroup &focus) {
   SkkTestServer server;
   RawConfig saved;
   engine.getConfig()->save(saved);
@@ -164,7 +174,8 @@ void verifySkkserv(Instance &instance, InputMethodEngine &engine, FocusGroup &fo
   FCITX_ASSERT(server.requests == 2);
   context.reset();
 
-  for (auto flag : {CapabilityFlag::Sensitive, CapabilityFlag::Password, CapabilityFlag::Disable}) {
+  for (auto flag : {CapabilityFlag::Sensitive, CapabilityFlag::Password,
+                    CapabilityFlag::Disable}) {
     context.setCapabilityFlags(CapabilityFlags{CapabilityFlag::Preedit, flag});
     sequence(context, "T o u k y o u space");
     FCITX_ASSERT(context.inputPanel().clientPreedit().toString() != "▼東京");
@@ -185,7 +196,8 @@ void verifySkkserv(Instance &instance, InputMethodEngine &engine, FocusGroup &fo
   engine.setConfig(invalid);
   RawConfig after;
   engine.getConfig()->save(after);
-  FCITX_ASSERT(*after.valueByPath("SkkservHost") == *config.valueByPath("SkkservHost"));
+  FCITX_ASSERT(*after.valueByPath("SkkservHost") ==
+               *config.valueByPath("SkkservHost"));
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == preedit);
 
   RawConfig disabled = config;
@@ -272,16 +284,19 @@ void verifyDelayedCandidates(Instance &instance, InputMethodEngine &engine,
   sequence(context, "I c h i r a n");
   for (const auto &text : {"一覧一", "一覧二", "一覧三", "一覧四"}) {
     send(context, "space");
-    FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼" + std::string(text));
+    FCITX_ASSERT(context.inputPanel().clientPreedit().toString() ==
+                 "▼" + std::string(text));
     FCITX_ASSERT(!context.inputPanel().candidateList());
     FCITX_ASSERT(context.inputPanel().preedit().empty());
     FCITX_ASSERT(context.inputPanel().auxUp().empty());
     if (std::string(text) == "一覧一") {
       FCITX_ASSERT(send(context, "Down"));
-      FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼一覧二");
+      FCITX_ASSERT(context.inputPanel().clientPreedit().toString() ==
+                   "▼一覧二");
       FCITX_ASSERT(!context.inputPanel().candidateList());
       sequence(context, "Up Up");
-      FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼一覧一");
+      FCITX_ASSERT(context.inputPanel().clientPreedit().toString() ==
+                   "▼一覧一");
     }
   }
   send(context, "Down");
@@ -307,7 +322,8 @@ void verifyDelayedCandidates(Instance &instance, InputMethodEngine &engine,
   send(context, "Page_Down");
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼一覧十二");
   send(context, "space");
-  FCITX_ASSERT(context.inputPanel().clientPreedit().toString().find("【") != std::string::npos);
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString().find("【") !=
+               std::string::npos);
   send(context, "Control+g");
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼一覧十五");
   FCITX_ASSERT(context.inputPanel().candidateList());
@@ -343,10 +359,12 @@ void verifyDelayedCandidates(Instance &instance, InputMethodEngine &engine,
   FCITX_ASSERT(context.commits.back() == "クリック六");
 
   sequence(context, "I c h i r a n space space space space space");
-  auto paged = std::dynamic_pointer_cast<CommonCandidateList>(context.inputPanel().candidateList());
+  auto paged = std::dynamic_pointer_cast<CommonCandidateList>(
+      context.inputPanel().candidateList());
   FCITX_ASSERT(paged);
   paged->next();
-  const auto scrolled = paged->candidate(paged->cursorIndex()).text().stringAt(0);
+  const auto scrolled =
+      paged->candidate(paged->cursorIndex()).text().stringAt(0);
   send(context, "Return");
   FCITX_ASSERT(context.commits.back() == scrolled);
 
@@ -362,7 +380,8 @@ void verifyDelayedCandidates(Instance &instance, InputMethodEngine &engine,
   const auto selected = context.inputPanel().clientPreedit().toString();
   config.setValueByPath("InlineCandidates", "0");
   engine.setConfig(config);
-  auto full = std::dynamic_pointer_cast<CommonCandidateList>(context.inputPanel().candidateList());
+  auto full = std::dynamic_pointer_cast<CommonCandidateList>(
+      context.inputPanel().candidateList());
   FCITX_ASSERT(full && full->totalSize() == 15);
   FCITX_ASSERT(full->globalCursorIndex() == 3);
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == selected);
@@ -390,7 +409,8 @@ void verifyDelayedCandidates(Instance &instance, InputMethodEngine &engine,
   FCITX_ASSERT(send(context, "Page_Down"));
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼幹事");
   send(context, "space");
-  FCITX_ASSERT(context.inputPanel().clientPreedit().toString().find("【") != std::string::npos);
+  FCITX_ASSERT(context.inputPanel().clientPreedit().toString().find("【") !=
+               std::string::npos);
   send(context, "Control+g");
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == "▼幹事");
   FCITX_ASSERT(!context.inputPanel().candidateList());
@@ -551,7 +571,8 @@ void verify(Instance &instance) {
 #if TGSKK_FCITX_HAS_OVERLAY
   FCITX_ASSERT(first.inputPanel().overlayMessage().toString() == "ア");
 #else
-  FCITX_ASSERT(first.inputPanel().auxUp().toString().find("ア") != std::string::npos);
+  FCITX_ASSERT(first.inputPanel().auxUp().toString().find("ア") !=
+               std::string::npos);
 #endif
   sequence(first, "a");
   FCITX_ASSERT(!send(first, "Control+c"));
@@ -621,9 +642,7 @@ void verify(Instance &instance) {
   auto afterReplacement = first.inputPanel().candidateList();
   const auto recovered = afterReplacement->candidate(1).text().stringAt(0);
   afterReplacement->candidate(1).select(&first);
-  const auto userPath =
-      tgskk::userDataDirectory() /
-      "tgskk/SKK-JISYO.user";
+  const auto userPath = tgskk::userDataDirectory() / "tgskk/SKK-JISYO.user";
   FCITX_ASSERT(std::filesystem::remove(userPath));
   engine->save();
   FCITX_ASSERT(std::filesystem::exists(userPath));
@@ -665,7 +684,8 @@ void verify(Instance &instance) {
   sequence(first, "l a b c");
   FCITX_ASSERT(first.inputPanel().auxUp().empty());
   sequence(first, "Control+j K a n j i space");
-  FCITX_ASSERT(first.inputPanel().auxUp().toString().find("Zenz unavailable") != std::string::npos);
+  FCITX_ASSERT(first.inputPanel().auxUp().toString().find("Zenz unavailable") !=
+               std::string::npos);
   send(first, "Return");
   FCITX_ASSERT(first.inputPanel().auxUp().empty());
   engine->setConfig(savedZenz);
@@ -676,7 +696,9 @@ void verify(Instance &instance) {
 }
 
 void verifyZenz(Instance &instance) {
-  if (!std::getenv("TGSKK_TEST_ZENZ")) { return; }
+  if (!std::getenv("TGSKK_TEST_ZENZ")) {
+    return;
+  }
   FocusGroup focus("zenz-test", instance.inputContextManager());
   TestContext context(instance.inputContextManager());
   context.setFocusGroup(&focus);
@@ -684,24 +706,32 @@ void verifyZenz(Instance &instance) {
   instance.setCurrentInputMethod(&context, "tgskk", false);
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   auto convert = [&](const std::string &left, bool wait) {
-    context.surroundingText().setText(left, utf8::length(left), utf8::length(left));
+    context.surroundingText().setText(left, utf8::length(left),
+                                      utf8::length(left));
     sequence(context, "K i s h a");
-    if (wait) { std::this_thread::sleep_for(std::chrono::milliseconds(120)); }
+    if (wait) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    }
     send(context, "space");
     return context.inputPanel().clientPreedit().toString();
   };
   auto station = convert("駅で", true);
-  const auto readyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (station != "▼汽車" && std::chrono::steady_clock::now() < readyDeadline) {
+  const auto readyDeadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (station != "▼汽車" &&
+         std::chrono::steady_clock::now() < readyDeadline) {
     context.reset();
     station = convert("駅で", true);
   }
-  FCITX_ASSERT(station == "▼汽車") << "preedit=" << station << " aux=" << context.inputPanel().auxUp().toString();
+  FCITX_ASSERT(station == "▼汽車")
+      << "preedit=" << station
+      << " aux=" << context.inputPanel().auxUp().toString();
   FCITX_ASSERT(context.inputPanel().auxUp().toString() == "AI-ranked");
   context.reset();
   FCITX_ASSERT(convert("新聞の", true) == "▼記者");
   context.reset();
-  context.setCapabilityFlags(CapabilityFlags{CapabilityFlag::Preedit, CapabilityFlag::Sensitive});
+  context.setCapabilityFlags(
+      CapabilityFlags{CapabilityFlag::Preedit, CapabilityFlag::Sensitive});
   FCITX_ASSERT(convert("駅で", true) == "▼記者");
   FCITX_ASSERT(context.inputPanel().auxUp().empty());
   context.reset();
@@ -758,7 +788,8 @@ void verifyZenz(Instance &instance) {
   FCITX_ASSERT(currentKisha() == "▼記者");
   context.reset();
 
-  context.setCapabilityFlags(CapabilityFlags{CapabilityFlag::Preedit, CapabilityFlag::Sensitive});
+  context.setCapabilityFlags(
+      CapabilityFlags{CapabilityFlag::Preedit, CapabilityFlag::Sensitive});
   sequence(context, "E k i d e space Return");
   FCITX_ASSERT(context.commits.back() == "駅で");
   context.setCapabilityFlags(CapabilityFlag::Preedit);
@@ -786,7 +817,8 @@ void verifyZenz(Instance &instance) {
   std::this_thread::sleep_for(std::chrono::milliseconds(120));
   FCITX_ASSERT(context.inputPanel().clientPreedit().toString() == first);
   context.reset();
-  auto *engine = dynamic_cast<InputMethodEngine *>(instance.addonManager().addon("tgskk", true));
+  auto *engine = dynamic_cast<InputMethodEngine *>(
+      instance.addonManager().addon("tgskk", true));
   FCITX_ASSERT(engine);
   RawConfig original;
   engine->getConfig()->save(original);
@@ -823,12 +855,16 @@ int main() {
   const std::filesystem::path root(path);
   setenv("SKIP_FCITX_PATH", "1", 1);
   setenv("FCITX_ADDON_DIRS",
-         ((std::getenv("TGSKK_TEST_INSTALLED") ? std::string() : std::string(TGSKK_BUILD_DIR) + ":") +
+         ((std::getenv("TGSKK_TEST_INSTALLED")
+               ? std::string()
+               : std::string(TGSKK_BUILD_DIR) + ":") +
           tgskk::systemPath("addondir").string())
              .c_str(),
          1);
   setenv("FCITX_DATA_DIRS",
-         ((std::getenv("TGSKK_TEST_INSTALLED") ? std::string() : std::string(TGSKK_BUILD_DIR) + "/test-data:") +
+         ((std::getenv("TGSKK_TEST_INSTALLED")
+               ? std::string()
+               : std::string(TGSKK_BUILD_DIR) + "/test-data:") +
           tgskk::systemPath("pkgdatadir").string())
              .c_str(),
          1);
@@ -836,18 +872,25 @@ int main() {
   setenv("FCITX_DATA_HOME", (root / "data").c_str(), 1);
   if (const char *model = std::getenv("TGSKK_TEST_USER_MODEL")) {
     std::filesystem::create_directories(root / "data/tgskk");
-    std::filesystem::copy_file(model, root / "data/tgskk" / std::filesystem::path(TGSKK_ZENZ_MODEL).filename());
+    std::filesystem::copy_file(
+        model, root / "data/tgskk" /
+                   std::filesystem::path(TGSKK_ZENZ_MODEL).filename());
   }
   std::filesystem::create_directories(root / "config/conf");
   std::ofstream dictionary(root / "SKK-JISYO.utf8");
   std::ifstream demo(TGSKK_SOURCE_DIR "/examples/SKK-JISYO.demo.utf8");
   dictionary << demo.rdbuf();
-  dictionary << "\nきしゃ /記者/汽車/帰社/貴社/\nえき /駅/\nえきで /駅で/\nこうえん /公園/講演/公演/後援/\n";
+  dictionary << "\nきしゃ /記者/汽車/帰社/貴社/\nえき /駅/\nえきで "
+                "/駅で/\nこうえん /公園/講演/公演/後援/\n";
   dictionary << "\nてすと "
                 "/候補一/候補二/候補三/候補四/候補五/候補六/候補七/候補八/"
                 "候補九/候補十/\n";
-  dictionary << "いちらん /一覧一/一覧二/一覧三/一覧四/一覧五/一覧六/一覧七/一覧八/一覧九/一覧十/一覧十一/一覧十二/一覧十三/一覧十四/一覧十五/\n";
-  dictionary << "くりっく /クリック一/クリック二/クリック三/クリック四/クリック五/クリック六/クリック七/クリック八/\n";
+  dictionary << "いちらん "
+                "/一覧一/一覧二/一覧三/一覧四/一覧五/一覧六/一覧七/一覧八/"
+                "一覧九/一覧十/一覧十一/一覧十二/一覧十三/一覧十四/一覧十五/\n";
+  dictionary << "くりっく "
+                "/クリック一/クリック二/クリック三/クリック四/クリック五/"
+                "クリック六/クリック七/クリック八/\n";
   const char unrepresentable[] = "えらー /bad\0candidate/\n";
   dictionary.write(unrepresentable, sizeof(unrepresentable) - 1);
   dictionary.close();

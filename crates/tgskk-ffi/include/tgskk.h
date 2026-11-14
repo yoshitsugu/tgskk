@@ -42,7 +42,7 @@ void tgskk_runtime_free(TgskkRuntime *runtime);
 /* Startup only, before creating sessions. Adds a read-only user snapshot in
  * front of the base dictionary when another broker owns the writer lock. */
 uint8_t tgskk_runtime_prepend_readonly(TgskkRuntime *runtime, const char *path,
-                                     const char *encoding, char **error);
+                                       const char *encoding, char **error);
 typedef struct TgskkSaver TgskkSaver;
 /* Create once at startup: copies the initial user dictionary, then transfers
  * coalesced entry changes to a single disk writer. tick never waits for disk.
@@ -68,7 +68,8 @@ void tgskk_session_free(TgskkSession *session);
 /* Loading and scoring run off the input thread. Status: 0 loading, 1 ready,
  * 2 unavailable. A session retains the worker after this handle is freed.
  * NULL in set_zenz disables assistance without changing composition. */
-TgskkZenz *tgskk_zenz_new(const char *executable, const char *model, char **error);
+TgskkZenz *tgskk_zenz_new(const char *executable, const char *model,
+                          char **error);
 void tgskk_zenz_free(TgskkZenz *zenz);
 uint8_t tgskk_zenz_status(const TgskkZenz *zenz);
 /* Each error is returned once. Free non-NULL strings with tgskk_string_free. */
@@ -77,7 +78,8 @@ uint8_t tgskk_session_set_zenz(TgskkSession *session, const TgskkZenz *zenz);
 /* Call before each key with bounded text strictly left of the caret. enabled=0
  * invalidates pending work and clears context, including for sensitive fields.
  * Neither function performs inference or waits for the worker. */
-uint8_t tgskk_session_context(TgskkSession *session, const char *left, uint8_t enabled);
+uint8_t tgskk_session_context(TgskkSession *session, const char *left,
+                              uint8_t enabled);
 
 /* SKK server workers start idle. Only conversions with no local candidates
  * may wait (0..1000 ms); DNS, network and helper IPC run on the worker thread.
@@ -86,13 +88,14 @@ uint8_t tgskk_session_context(TgskkSession *session, const char *left, uint8_t e
  * Sessions retain the worker after the handle is freed. NULL in set_skkserv
  * disables it without changing composition or the local AI provider. */
 TgskkSkkserv *tgskk_skkserv_google_new(const char *executable, uint32_t wait_ms,
-                                     char **error);
+                                       char **error);
 TgskkSkkserv *tgskk_skkserv_custom_new(const char *host, uint16_t port,
-                                     const char *encoding, uint32_t wait_ms,
-                                     char **error);
+                                       const char *encoding, uint32_t wait_ms,
+                                       char **error);
 void tgskk_skkserv_free(TgskkSkkserv *server);
 char *tgskk_skkserv_take_error(const TgskkSkkserv *server);
-uint8_t tgskk_session_set_skkserv(TgskkSession *session, const TgskkSkkserv *server);
+uint8_t tgskk_session_set_skkserv(TgskkSession *session,
+                                  const TgskkSkkserv *server);
 /* Permission starts disabled and is revoked by reset, unhandled keys, and
  * set_skkserv. Set before each key according to focus/sensitivity/selection,
  * independently of AI context. Disabled permission also bypasses the cache. */
@@ -113,8 +116,10 @@ typedef struct TgskkView {
 /* Side-effect-free eligibility query: 1 means call key(), whose consumed flag
  * remains authoritative; commands can have effects while passing a key through.
  * 0 means ineligible, -1 means failure: read session_error and discard session.
- * Does not advance input or invalidate a borrowed view; panic poisons session. */
-int8_t tgskk_session_may_process(TgskkSession *session, uint32_t keysym, uint32_t modifiers);
+ * Does not advance input or invalidate a borrowed view; panic poisons session.
+ */
+int8_t tgskk_session_may_process(TgskkSession *session, uint32_t keysym,
+                                 uint32_t modifiers);
 /* Returned views and strings are borrowed until the next key/select/reset/free
  * on that session. NULL means failure; read session_error and discard the
  * session. A Rust panic poisons the session and is contained at this boundary.
@@ -133,8 +138,9 @@ const TgskkView *tgskk_session_reset(TgskkSession *session);
 const TgskkView *tgskk_session_set_mode(TgskkSession *session, uint8_t mode);
 /* Host capability, default off. For zero-wait server requests, preserve reading
  * and okuri while fetching rather than enter registration. The host must allow
- * another explicit conversion and an escape to registration if the server fails.
- * Reset preserves this host policy; permission remains independently per-key. */
+ * another explicit conversion and an escape to registration if the server
+ * fails. Reset preserves this host policy; permission remains independently
+ * per-key. */
 uint8_t tgskk_session_defer_missing(TgskkSession *session, uint8_t enabled);
 /* Last action queued an unfinished missing-candidate lookup (wait=0 hosts).
  * This does not poll, queue, or wait for network work. */

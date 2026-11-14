@@ -167,9 +167,8 @@ bool acceptPipe(HANDLE pipe, HANDLE stop, DWORD timeout) {
     if (error != ERROR_IO_PENDING)
       return false;
     HANDLE events[] = {event.value, stop};
-    const DWORD remaining = timeout == INFINITE
-                                ? INFINITE
-                                : timeout - static_cast<DWORD>(elapsed);
+    const DWORD remaining =
+        timeout == INFINITE ? INFINITE : timeout - static_cast<DWORD>(elapsed);
     const DWORD result =
         WaitForMultipleObjects(stop ? 2 : 1, events, FALSE, remaining);
     if (result != WAIT_OBJECT_0)
