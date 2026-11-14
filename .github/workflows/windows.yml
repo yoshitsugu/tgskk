@@ -1,0 +1,295 @@
+name: Windows
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  worker:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Check installer test script
+        shell: pwsh
+        run: |
+          $parseTokens = $null
+          $parseErrors = $null
+          [Management.Automation.Language.Parser]::ParseFile("$pwd/scripts/test-windows-installer.ps1", [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          Import-Module PSScriptAnalyzer -RequiredVersion 1.25.0
+          $issues = @(Invoke-ScriptAnalyzer -Path scripts/test-windows-installer.ps1 -IncludeRule PSAvoidAssignmentToAutomaticVariable)
+          if ($issues.Count) { throw ($issues | Out-String) }
+      - name: Check Windows release verification
+        run: python -m unittest discover -s scripts/tests -p test_windows_release.py
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Prepare verified worker sources and model
+        run: python scripts/setup-zenz.py --prepare-only
+      - name: Build Windows AI worker
+        run: |
+          cmake -S native/zenz -B build/zenz-windows -A x64 -DTGSKK_LLAMA_SOURCE="$pwd/build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478"
+          cmake --build build/zenz-windows --config Release --parallel 2
+      - name: Test real Windows AI scoring and Unicode paths
+        run: |
+          $env:TGSKK_SERIAL_REFERENCE = "$pwd/build/zenz-windows/Release/test-zenz-serial-reference.exe"
+          python native/zenz/tests/check_worker.py build/zenz-windows/Release/tgskk-zenz-worker.exe build/models/zenz-v3.2-small-Q5_K_M.gguf
+      - name: Test Rust IPC with the real Windows worker
+        run: |
+          $env:TGSKK_TEST_WORKER = "$pwd/build/zenz-windows/Release/tgskk-zenz-worker.exe"
+          $env:TGSKK_TEST_MODEL = "$pwd/build/models/zenz-v3.2-small-Q5_K_M.gguf"
+          cargo +1.88.0 test -p tgskk-zenz --test windows_worker --locked -- --ignored
+      - name: Build shared Windows broker
+        run: |
+          cargo +1.88.0 build --release -p tgskk-ffi --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake -S addons/windows -B build/windows -A x64 -DTGSKK_RUST_LIBRARY="$pwd/target/release/tgskk_ffi.lib"
+          cmake --build build/windows --config Release --parallel 2
+      - name: Test real model through authenticated broker
+        shell: pwsh
+        run: |
+          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          icacls "$pwd" /grant "*$($sid):(OI)(CI)F" /T /Q | Out-Null
+          & build/windows/Release/test-windows-user.exe "$pwd/build/windows/model-broker.log" `
+            "$pwd/build/windows/Release/test-windows-broker.exe" `
+            "$pwd/build/windows/Release/tgskk-broker.exe" "$pwd/examples/SKK-JISYO.demo.utf8" `
+            "$pwd/build/zenz-windows/Release/tgskk-zenz-worker.exe" "$pwd/build/models/zenz-v3.2-small-Q5_K_M.gguf"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test native TSF with real contextual AI
+        shell: pwsh
+        run: |
+          $env:TGSKK_DEBUG = '1'
+          $dll = "$pwd/build/windows/Release/tgskk-tip.dll"
+          & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --prepare-fixture
+          if ($LASTEXITCODE -ne 0) { throw "TSF fixture registration failed" }
+          try {
+            & build/windows/Release/test-windows-user.exe --standard-user "$pwd" "$pwd/build/windows/model-tsf.log" `
+              "$pwd/build/windows/Release/test-windows-broker.exe" `
+              "$pwd/build/windows/Release/tgskk-broker.exe" "$pwd/examples/SKK-JISYO.demo.utf8" `
+              --tsf-ai "$pwd/build/windows/Release/test-windows-tsf.exe" $dll "$pwd/examples/SKK-JISYO.demo.utf8" `
+              "$pwd/build/zenz-windows/Release/tgskk-zenz-worker.exe" "$pwd/build/models/zenz-v3.2-small-Q5_K_M.gguf"
+            if ($LASTEXITCODE -ne 0) { throw "Native TSF contextual AI test failed" }
+          } finally {
+            & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --remove-fixture
+            if ($LASTEXITCODE -ne 0) { throw "TSF fixture unregistration failed" }
+          }
+      - name: Build bundled Google helper
+        run: cargo +1.88.0 build --release --manifest-path third_party/gskkserv/Cargo.toml --target-dir target --locked
+      - name: Bundle complete source and dependency notices
+        run: python scripts/windows-source.py
+      - name: Stage Windows distribution
+        shell: pwsh
+        run: |
+          python scripts/windows-assets.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binaries = "$pwd/build/windows/Release"
+          Copy-Item build/zenz-windows/Release/tgskk-zenz-worker.exe "$binaries/tgskk-zenz-worker.exe"
+          Copy-Item target/release/gskkserv.exe "$binaries/tgskk-google-skkserv.exe"
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
+          if (!$crt) { throw "MSVC redistributable runtime not found" }
+          python scripts/stage-windows.py --binaries "$binaries" --runtime "$($crt.FullName)" `
+            --dictionary build/windows-assets/SKK-JISYO.L --model build/models/zenz-v3.2-small-Q5_K_M.gguf `
+            --llama-source build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478 --output build/windows-package --vendor build/windows-source/vendor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = (Select-String '^version = "([^"]+)"' Cargo.toml).Matches[0].Groups[1].Value
+          $compiler = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          & $compiler "/DPayload=$pwd/build/windows-package/payload" "/DAppVersion=$version" `
+            "/DOutput=$pwd/build/windows-package" packaging/windows/tgskk.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test install, update and uninstall
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem build/windows-package/*-setup.exe | Select-Object -ExpandProperty FullName
+          & scripts/test-windows-installer.ps1 -Installer $installer -Payload "$pwd/build/windows-package/payload"
+      - name: Bundle source and checksums
+        shell: bash
+        run: |
+          cp build/downloads/llama-*.tar.gz build/windows-package/
+          cd build/windows-package
+          sha256sum ./*.zip ./*-setup.exe ./*.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-x64-distribution
+          path: |
+            build/windows-package/*.zip
+            build/windows-package/*-setup.exe
+            build/windows-package/*.tar.gz
+            build/windows-package/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-x64-installer
+          path: |
+            build/windows-package/*-setup.exe
+            build/windows-package/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-settings-screenshot
+          path: build/windows/settings.png
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-model-broker-logs
+          path: build/windows/*.log
+          if-no-files-found: ignore
+  desktop:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Test common core
+        run: cargo +1.88.0 test --workspace --locked
+      - name: Test CSKK with portable keysyms
+        run: cargo +1.88.0 test --manifest-path third_party/cskk/Cargo.toml --workspace --features cskk/capi --target-dir target --locked
+      - name: Test portable Google SKK helper
+        run: cargo +1.88.0 test --manifest-path third_party/gskkserv/Cargo.toml --target-dir target --locked
+      - name: Build Windows core
+        run: cargo +1.88.0 build --release -p tgskk-ffi --locked
+      - name: Build TSF and test harness
+        run: |
+          cmake -S addons/windows -B build/windows -A x64 -DTGSKK_RUST_LIBRARY="$pwd/target/release/tgskk_ffi.lib"
+          cmake --build build/windows --config Release --parallel 2
+      - name: Test managed Windows pipes
+        shell: pwsh
+        run: |
+          $env:TGSKK_TEST_CHILD = "$pwd/build/windows/Release/test-windows-child.exe"
+          cargo +1.88.0 test -p tgskk-process --test stdio --locked -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.88.0 test -p tgskk-skkserv --test google_windows --locked -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test Windows C ABI
+        run: ctest --test-dir build/windows -C Release --output-on-failure --no-tests=error
+      - name: Test authenticated shared broker at medium integrity
+        shell: pwsh
+        run: |
+          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          icacls "$pwd" /grant "*$($sid):(OI)(CI)F" /T /Q | Out-Null
+          & build/windows/Release/test-windows-user.exe "$pwd/build/windows/broker.log" `
+            "$pwd/build/windows/Release/test-windows-broker.exe" `
+            "$pwd/build/windows/Release/tgskk-broker.exe" "$pwd/examples/SKK-JISYO.demo.utf8"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test TSF on Windows
+        shell: pwsh
+        run: |
+          $env:TGSKK_DEBUG = '1'
+          $text = [System.IO.File]::ReadAllText("$pwd/examples/SKK-JISYO.demo.utf8")
+          $text += "`nこう /" + ((1..14 | ForEach-Object { '候補{0:D2}' -f $_ }) -join '/') + "/`n"
+          [System.Text.Encoding]::RegisterProvider([System.Text.CodePagesEncodingProvider]::Instance)
+          $encoding = [System.Text.Encoding]::GetEncoding(51932)
+          [System.IO.File]::WriteAllBytes("$pwd/build/windows/SKK-JISYO.L", $encoding.GetBytes($text))
+          $test = "$pwd/build/windows/Release/test-windows-tsf.exe"
+          $dll = "$pwd/build/windows/Release/tgskk-tip.dll"
+          $dictionary = "$pwd/build/windows/SKK-JISYO.L"
+          & $test $dll $dictionary
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $test $dll $dictionary --direct-key
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $test $dll $dictionary --reentrant-scope
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $control = @(& $test $dll $dictionary --rejection-control 2>&1)
+          $controlCode = $LASTEXITCODE
+          $control | ForEach-Object { Write-Host $_ }
+          if ($controlCode -notin @(0, 2)) { throw "Rejection control failed: $controlCode" }
+          $rejection = @(& $test $dll $dictionary --rejection 2>&1)
+          $rejectionCode = $LASTEXITCODE
+          $rejection | ForEach-Object { Write-Host $_ }
+          if ($rejectionCode -ne $controlCode) { throw "Rejection lifetime differs from the API control" }
+          if ($rejectionCode -eq 2) {
+            $log = $rejection -join "`n"
+            foreach ($kind in @('factory', 'edit', 'cleanup', 'service')) {
+              $created = [regex]::Matches($log, "tgskk: $kind created objects=").Count
+              $destroyed = [regex]::Matches($log, "tgskk: $kind destroyed objects=").Count
+              $expected = if ($kind -eq 'service') { 1 } else { 0 }
+              if ($created - $destroyed -ne $expected) { throw "Unexpected retained $kind objects" }
+            }
+            $references = [regex]::Matches($log, 'tgskk: service released references=(\d+)')
+            $objects = [regex]::Matches($log, 'tgskk: unload pending objects=(\d+)')
+            if (!$references.Count -or $references[-1].Groups[1].Value -ne '1' -or
+                !$objects.Count -or $objects[-1].Groups[1].Value -ne '1') {
+              throw "Rejection retained more than the observed single service reference"
+            }
+          }
+          exit 0
+      - name: Test native TSF with the shared broker
+        shell: pwsh
+        run: |
+          $env:TGSKK_DEBUG = '1'
+          $text = [System.IO.File]::ReadAllText("$pwd/examples/SKK-JISYO.demo.utf8")
+          $text += "`nこう /" + ((1..14 | ForEach-Object { '候補{0:D2}' -f $_ }) -join '/') + "/`n"
+          [System.IO.File]::WriteAllText("$pwd/build/windows/broker-dictionary.utf8", $text, [System.Text.UTF8Encoding]::new($false))
+          $dll = "$pwd/build/windows/Release/tgskk-tip.dll"
+          & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --prepare-fixture
+          if ($LASTEXITCODE -ne 0) { throw "TSF fixture registration failed" }
+          try {
+            & build/windows/Release/test-windows-user.exe --standard-user "$pwd" "$pwd/build/windows/tsf-broker.log" `
+              "$pwd/build/windows/Release/test-windows-broker.exe" `
+              "$pwd/build/windows/Release/tgskk-broker.exe" "$pwd/build/windows/broker-dictionary.utf8" `
+              --tsf "$pwd/build/windows/Release/test-windows-tsf.exe" $dll "$pwd/build/windows/SKK-JISYO.L"
+            if ($LASTEXITCODE -ne 0) { throw "Medium-integrity TSF broker test failed" }
+          } finally {
+            & build/windows/Release/test-windows-tsf.exe $dll "$pwd/examples/SKK-JISYO.demo.utf8" --remove-fixture
+            if ($LASTEXITCODE -ne 0) { throw "TSF fixture unregistration failed" }
+          }
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-desktop-broker-logs
+          path: build/windows/*.log
+          if-no-files-found: ignore
+  release-quality:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+    uses: ./.github/workflows/rust-quality.yml
+    with:
+      baseline-ref: HEAD^
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+    needs: [worker, desktop, release-quality]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v6
+        with:
+          name: windows-x64-distribution
+          path: build/windows-release
+      - name: Verify standalone release files
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/prepare-windows-release.py --tag "$TAG" --revision "$GITHUB_SHA"
+      - name: Publish Windows preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" build/windows-release/*-setup.exe build/windows-release/*.zip \
+            build/windows-release/*.tar.gz build/windows-release/SHA256SUMS \
+            --verify-tag --draft --prerelease --latest=false \
+            --title "Windows preview ($TAG)" --notes-file build/windows-release-notes.md
+          gh release edit "$TAG" --draft=false --prerelease --latest=false

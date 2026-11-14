@@ -24,6 +24,7 @@ pub enum CskkError {
         #[from]
         source: std::io::Error,
     },
+    #[cfg(unix)]
     #[error(transparent)]
     XDGBaseDirectoryError {
         #[from]

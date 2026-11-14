@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use cskk::CskkContext;
 
-pub use cskk::{dictionary::CskkDictionary, error::CskkError};
+pub use cskk::{
+    dictionary::{CskkDictionary, DictionaryUpdates, SaveVersion},
+    error::CskkError,
+};
 
 pub use cskk::conversion::{
     ConversionCandidate, ConversionError, ConversionProvider, ConversionRequest,
-    ConversionResponse, LearningPolicy, MissingConversionProvider,
+    ConversionResponse, LearningPolicy, MissingConversionProvider, MissingConversionResponse,
 };
 pub use cskk::keyevent::CskkKeyEvent;
 pub use cskk::skk_modes::{CompositionMode, InputMode};
@@ -84,6 +87,11 @@ impl InputSession {
         self.context.preview_conversion_limited(limit)
     }
 
+    #[must_use]
+    pub fn may_process(&self, event: &CskkKeyEvent) -> bool {
+        self.context.will_process(event)
+    }
+
     pub fn process_key(&mut self, event: &CskkKeyEvent) -> InputOutcome {
         let before = self.context.get_current_input_mode();
         let consumed = self.context.process_key_event(event);
@@ -126,6 +134,12 @@ impl InputSession {
     #[must_use]
     pub fn input_mode(&self) -> InputMode {
         self.context.get_current_input_mode()
+    }
+    pub fn set_input_mode(&mut self, mode: InputMode) -> InputOutcome {
+        let before = self.input_mode();
+        cskk::skk_context_reset_rs(&mut self.context);
+        cskk::skk_context_set_input_mode_rs(&mut self.context, mode);
+        self.outcome(before, false)
     }
 
     #[must_use]
@@ -171,5 +185,80 @@ impl InputSession {
         let before = self.context.get_current_input_mode();
         cskk::skk_context_reset_rs(&mut self.context);
         self.mode_change_from(before)
+    }
+}
+
+#[cfg(test)]
+mod eligibility_tests {
+    use super::*;
+    #[test]
+    fn ineligible_keys_are_never_consumed_across_modes_and_compositions() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/SKK-JISYO.demo.utf8");
+        let prefixes: &[&[(u32, u32)]] = &[
+            &[],
+            &[(u32::from(b'l'), 0)],
+            &[(u32::from(b'L'), 1)],
+            &[(u32::from(b'q'), 0)],
+            &[(u32::from(b'q'), 4)],
+            &[(u32::from(b'k'), 0)],
+            &[(u32::from(b'K'), 1), (u32::from(b'a'), 0)],
+            &[
+                (u32::from(b'K'), 1),
+                (u32::from(b'i'), 0),
+                (u32::from(b's'), 0),
+                (u32::from(b'h'), 0),
+                (u32::from(b'a'), 0),
+                (u32::from(b' '), 0),
+            ],
+            &[
+                (u32::from(b'M'), 1),
+                (u32::from(b'i'), 0),
+                (u32::from(b' '), 0),
+            ],
+        ];
+        for prefix in prefixes {
+            let mut input = InputSession::open(path.to_str().unwrap(), "utf-8").unwrap();
+            for modifiers in [0, 1, 4, 5, 8] {
+                for symbol in (0x20..=0x7e).chain([
+                    0xff08, 0xff09, 0xff0d, 0xff1b, 0xff51, 0xff52, 0xff53, 0xff54, 0xff55, 0xff56,
+                ]) {
+                    let _ = input.reset();
+                    input.process_key(&CskkKeyEvent::from_fcitx_keyevent(
+                        u32::from(b'j'),
+                        4,
+                        false,
+                    ));
+                    for &(key, mods) in *prefix {
+                        input.process_key(&CskkKeyEvent::from_fcitx_keyevent(key, mods, false));
+                    }
+                    let key = CskkKeyEvent::from_fcitx_keyevent(symbol, modifiers, false);
+                    let eligible = input.may_process(&key);
+                    let outcome = input.process_key(&key);
+                    assert!(
+                        eligible || !outcome.consumed,
+                        "ineligible key was consumed: prefix={prefix:?} symbol={symbol:#x} modifiers={modifiers}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn uppercase_start_and_repeated_queries_preserve_input_state() {
+        for modifiers in [0, 1] {
+            let mut checked = InputSession::with_dictionaries(vec![]).unwrap();
+            let mut direct = InputSession::with_dictionaries(vec![]).unwrap();
+            for symbol in "KAnji1,.!".chars() {
+                let key = CskkKeyEvent::from_fcitx_keyevent(symbol as u32, modifiers, false);
+                for _ in 0..3 {
+                    assert!(checked.may_process(&key));
+                }
+                let actual = checked.process_key(&key);
+                let expected = direct.process_key(&key);
+                assert_eq!(actual.preedit, expected.preedit);
+                assert_eq!(actual.committed, expected.committed);
+                assert_eq!(actual.consumed, expected.consumed);
+            }
+        }
     }
 }

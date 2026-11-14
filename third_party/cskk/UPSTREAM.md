@@ -9,7 +9,7 @@
 ## tgskk向けの拡張
 
 - `conversion`モジュールに、表示前に取得済み候補と順位を渡す同期providerを追加した。
-- ローカル候補がない実変換だけで呼ぶ`MissingConversionProvider`を追加した。previewやcompletionでは呼ばず、追加した候補を通常のproviderへ渡す。
+- ローカル候補がない実変換だけで呼ぶ`MissingConversionProvider`を追加した。previewやcompletionでは呼ばず、追加した候補を通常のproviderへ渡す。`MissingConversionResponse::Pending`を返すと登録へ移らず、読みと送り仮名を保って次の明示的な変換操作で再試行する。従来の`ConversionResponse`を返すclosureは完了済み応答として使える。
 - SKK serverとの連携用に、既存の送り仮名見出し生成へ委譲する`ConversionRequest::dictionary_key()`と、外部候補の共通検証`ConversionCandidate::validate_external()`を公開した。
 - 順位のindexは`request.candidates`の順序を基準とする。ローカル候補は注釈や数値変換の由来を保つため重複を残し、表記がまだない追加候補だけを順番に末尾へ足す。この一覧の完全な順位置換だけを受け入れる。
 - 不正な追加候補や順位では応答全体を捨て、ローカル候補を保つ。エラーは呼び出し元へ返せる。
@@ -25,6 +25,8 @@
 - 直接入力中の取消では登録の入れ子を抜ける場合を除いて、終了済みの変換履歴へ戻らない。かな確定や候補削除の後に古い▽や空の▼が復活することを防ぐ。
 - ユーザー辞書は同じディレクトリの一時ファイルへ書き出して同期し、元の内容のバックアップを保存した後、ファイルを置き換える。元のファイルが消えていてもメモリ上の学習から再保存できる。符号化や保存に失敗した場合は元のファイルと未保存の学習を保持する。
 
+- `CskkDictionary`に非同期保存用のstreamを追加した。初期状態を一度だけコピーし、以降は変更した見出しごとの最終状態をまとめてwriterへ渡す。LRUの変更順と辞書のrevisionを保持し、古い保存完了通知で新しい学習を保存済みにしない。stream中の同期保存とreloadは拒否し、保存失敗は未保存の変更を保持して再試行できる。
+
 通常のproviderは入力スレッドで呼ばれる。
 ネットワーク、ディスク、推論をこの中で実行せず、workerやcacheで準備済みの結果だけを返す契約である。
 tgskkのZenz providerもこの契約に従い、バックグラウンドの採点結果だけを読む。
@@ -36,9 +38,23 @@ providerは候補一覧の初回構築時に呼ばれ、すでに表示してい
 ## ビルドと検証の調整
 
 Rustライブラリとしての利用では不要な`cargo-c`のbuild dependencyを外し、xkbcommonのWayland向けfeatureを無効にした。
-キーの解釈に必要なlibxkbcommonへの依存は残る。
+Unixではキーの解釈に必要なlibxkbcommonへの依存が残る。
 テスト用loggerのdefault featureも外した。
 元のCargoパッケージ用metadataは保持しているが、リリース用の`cargo cinstall`やDebianパッケージ生成は検証していない。
 
 tgskkのworkspaceからは独立させ、上流テストを別のworkspaceとして実行する。
 `bash scripts/check.sh`で両方のテストを実行できる。
+
+## Windows portability
+
+Windows builds use a Rust keysym adapter instead of linking libxkbcommon.
+Its key constants and name table are generated from the libxkbcommon header;
+the original notices are retained in `cskk/src/portable_keysyms_data.rs`.
+The generator pins the libxkbcommon 1.13.2 header by SHA-256. Parity tests compare
+the common names with the installed library; newer names and control/numeric
+key mappings are checked independently when that library predates them.
+Unix builds continue to use libxkbcommon. XDG-based rule discovery is Unix-only;
+Windows callers use bundled rules or an explicit rule directory.
+The read-only eligibility query includes uppercase kana starts and ASCII
+fallback input. It is conservative: the processing result still determines
+whether a key is consumed, since commands may pass keys through after effects.

@@ -3,13 +3,13 @@ use crate::cskkstate::CskkStateInfo::Complete;
 use crate::dictionary::candidate::Candidate;
 use crate::dictionary::CompositeKey;
 use crate::form_changer::KanaFormChanger;
+use crate::keysym::{keysym_get_name, Keysym};
 use crate::skk_modes::{CompositionMode, InputMode};
 use crate::CskkStateInfo::{
     CompositionSelection, Direct, PreComposition, PreCompositionOkurigana, Register,
 };
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
-use xkbcommon::xkb::{keysym_get_name, Keysym};
 
 // 実用上10で問題なかったので安全率2で
 const COMPOSITION_MODE_HISTORY_MAX: usize = 20;

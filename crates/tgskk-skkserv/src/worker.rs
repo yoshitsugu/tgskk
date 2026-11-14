@@ -12,27 +12,23 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::io;
 use std::net::ToSocketAddrs;
-#[cfg(unix)]
-use std::os::fd::OwnedFd;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::process::{Child, Command, Stdio};
+#[cfg(any(unix, windows))]
+use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::client::TrailingData;
 use crate::{Candidate, ClientError, Encoding, Error, ProtocolError, encode_request, fetch};
 
 const MAX_HOST_BYTES: usize = 253;
 const MAX_CALLER_WAIT: Duration = Duration::from_secs(1);
 const FETCH_DEADLINE: Duration = Duration::from_secs(3);
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const HELPER_DEADLINE: Duration = Duration::from_secs(2);
 const MAX_RESOLVED_ADDRESSES: usize = 16;
 const CACHE_CAPACITY: usize = 128;
@@ -182,9 +178,9 @@ impl StdError for LookupError {
 #[derive(Debug)]
 enum LookupFailure {
     Dns,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Spawn,
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     Unsupported,
     Timeout,
     Io,
@@ -207,9 +203,9 @@ impl fmt::Display for LookupFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dns => f.write_str("SKK server hostname resolution failed"),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Self::Spawn => f.write_str("SKK helper process could not start"),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Self::Unsupported => {
                 f.write_str("SKK helper process is not supported on this platform")
             }
@@ -435,12 +431,12 @@ enum Backend {
         port: u16,
         encoding: Encoding,
     },
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Google {
         executable: PathBuf,
         helper: Option<GoogleHelper>,
     },
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     UnsupportedGoogle,
 }
 
@@ -457,14 +453,14 @@ impl Backend {
                 encoding: *encoding,
             },
             Endpoint::Google { executable } => {
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 {
                     Self::Google {
                         executable: executable.clone(),
                         helper: None,
                     }
                 }
-                #[cfg(not(unix))]
+                #[cfg(not(any(unix, windows)))]
                 {
                     let _ = executable;
                     Self::UnsupportedGoogle
@@ -484,11 +480,11 @@ impl Backend {
                 port,
                 encoding,
             } => tcp_lookup(host, *port, *encoding, reading, overall_deadline),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             Self::Google { executable, helper } => {
                 google_lookup(executable, helper, reading, overall_deadline)
             }
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Self::UnsupportedGoogle => Err(LookupFailure::Unsupported),
         }
     }
@@ -525,13 +521,13 @@ fn tcp_lookup(
     Err(last.unwrap_or(LookupFailure::Dns))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct GoogleHelper {
     child: Child,
-    stream: UnixStream,
+    stream: tgskk_process::Stream,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Drop for GoogleHelper {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -539,19 +535,10 @@ impl Drop for GoogleHelper {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl GoogleHelper {
     fn start(executable: &Path) -> io::Result<Self> {
-        let (stream, child_stream) = UnixStream::pair()?;
-        let stdin = Stdio::from(OwnedFd::from(child_stream.try_clone()?));
-        let stdout = Stdio::from(OwnedFd::from(child_stream));
-        let child = Command::new(executable)
-            .arg("--stdio")
-            .arg("--encoding=utf-8")
-            .stdin(stdin)
-            .stdout(stdout)
-            .stderr(Stdio::null())
-            .spawn()?;
+        let (child, stream) = tgskk_process::spawn(executable, ["--stdio", "--encoding=utf-8"])?;
         Ok(Self { child, stream })
     }
 
@@ -575,7 +562,7 @@ impl GoogleHelper {
 /// is dropped (killed and waited) on any failure, so the next lookup starts a
 /// fresh process. The helper exchange has its own 2 second bound inside the
 /// worker's overall 3 second deadline.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn google_lookup(
     executable: &Path,
     helper: &mut Option<GoogleHelper>,

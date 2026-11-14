@@ -1,4 +1,6 @@
 use crate::error::CskkError;
+use crate::keysym as xkb;
+use crate::keysym::{keysym_from_name, keysym_get_name, keysyms, Keysym};
 use serde_with::DeserializeFromStr;
 use std::fmt;
 use std::fmt::Formatter;
@@ -6,8 +8,6 @@ use std::fmt::{Debug, Display};
 #[allow(unused_imports)]
 use std::ops::BitAndAssign;
 use std::str::FromStr;
-use xkbcommon::xkb;
-use xkbcommon::xkb::{keysym_from_name, keysym_get_name, keysyms, Keysym};
 
 bitflags! {
     ///

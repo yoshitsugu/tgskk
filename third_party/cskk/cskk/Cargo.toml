@@ -19,7 +19,7 @@ capi = []
 
 [dependencies]
 log = "^0.4.29"
-xkbcommon = { version = "^0.8.0", default-features = false }
+xkeysym = "0.2.1"
 bitflags = "2.10.0"
 enum-display-derive = "^0.1.0"
 serde = "^1.0.228"
@@ -31,7 +31,7 @@ toml = "0.8.23"
 thiserror = "2.0.17"
 regex = "^1.12.2"
 lazy_static = "1.4"
-xdg = { version = "^2.4" }
+
 anyhow = { version = "^1.0.100" }
 nom = "^8.0.0"
 serde_with = { version = "3.0.0", features = ["macros"] }
@@ -84,6 +84,10 @@ assets = [["../assets/**/*", "usr/local/share/libcskk/", "644"],
     ["target/release/cskk.pc", "usr/local/lib/pkgconfig/", "644"],
     ["target/release/libcskk.h", "usr/local/include/cskk/", "644"]]
 
+
+[target.'cfg(unix)'.dependencies]
+xkbcommon = { version = "^0.8.0", default-features = false }
+xdg = "^2.4"
 
 [lints.clippy]
 # The public Arc-based dictionary API is retained; RefCell-backed dictionaries stay on their owning thread.

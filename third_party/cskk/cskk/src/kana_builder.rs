@@ -1,11 +1,11 @@
 use crate::keyevent::CskkKeyEvent;
+use crate::keysym::keysyms;
 use crate::rule::CskkRule;
 use crate::skk_modes::{CommaStyle, PeriodStyle};
 use sequence_trie::SequenceTrie;
 use std::collections::HashMap;
-use xkbcommon::xkb::keysyms;
 
-use xkbcommon::xkb::Keysym;
+use crate::keysym::Keysym;
 
 pub(crate) type Converted = String;
 pub(crate) type CarryOver = Vec<Keysym>;
@@ -192,7 +192,7 @@ impl KanaBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xkbcommon::xkb::keysyms::{
+    use crate::keysym::keysyms::{
         KEY_a, KEY_at, KEY_b, KEY_bracketleft, KEY_e, KEY_i, KEY_k, KEY_n, KEY_o, KEY_s, KEY_t,
         KEY_u, KEY_7, KEY_A, KEY_B,
     };

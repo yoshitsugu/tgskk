@@ -57,6 +57,7 @@ install(FILES tgskk.conf DESTINATION "${FCITX_INSTALL_PKGDATADIR}/addon")
 install(FILES tgskk-inputmethod.conf DESTINATION "${FCITX_INSTALL_PKGDATADIR}/inputmethod" RENAME tgskk.conf)
 
 if(BUILD_TESTING)
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../common" common)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-data/addon" "${CMAKE_CURRENT_BINARY_DIR}/test-data/inputmethod")
     configure_file(tgskk.conf test-data/addon/tgskk.conf COPYONLY)
     configure_file(tgskk-inputmethod.conf test-data/inputmethod/tgskk.conf COPYONLY)

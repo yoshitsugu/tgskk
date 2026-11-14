@@ -154,6 +154,16 @@ impl DeadlineStream for std::os::unix::net::UnixStream {
     }
 }
 
+#[cfg(windows)]
+impl DeadlineStream for tgskk_process::Pipe {
+    fn arm_read(&self, timeout: Duration) -> io::Result<()> {
+        self.set_read_timeout(Some(timeout))
+    }
+    fn arm_write(&self, timeout: Duration) -> io::Result<()> {
+        self.set_write_timeout(Some(timeout))
+    }
+}
+
 /// Writes one request and reads one bounded, validated response frame. The
 /// deadline is rechecked after the frame is read, uniformly for fresh TCP
 /// connections and persistent helper sockets.

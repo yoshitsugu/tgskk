@@ -7,7 +7,9 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate nom;
-extern crate xkbcommon;
+mod keysym;
+#[cfg(any(windows, test))]
+mod portable_keysyms;
 
 use crate::command_handler::ConfigurableCommandHandler;
 use crate::command_handler::Instruction;
@@ -23,6 +25,7 @@ use crate::error::CskkError;
 use crate::kana_builder::KanaBuilder;
 use crate::keyevent::KeyEventSeq;
 use crate::keyevent::{CskkKeyEvent, SkkKeyModifier};
+use crate::keysym::Keysym;
 use crate::rule::{CskkRule, CskkRuleMetadata, CskkRuleMetadataEntry};
 use crate::skk_modes::{has_rom2kana_conversion, CompositionMode};
 use crate::skk_modes::{CommaStyle, InputMode, PeriodStyle};
@@ -32,7 +35,6 @@ use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use xkbcommon::xkb::Keysym;
 
 mod candidate_list;
 #[cfg(feature = "capi")]
@@ -560,19 +562,26 @@ impl CskkContext {
     ///
     /// 現在のraw_to_compositeから変換候補をリストにして、変換候補を指すポインタを0に戻す。
     ///
-    fn update_candidate_list(&mut self) {
+    // Pending lookups retain both the reading and okuri without entering registration.
+    fn update_candidate_list(&mut self) -> bool {
         let composite_key = self.current_state_ref().get_composite_key();
         self.conversion_error = None;
         if composite_key.get_to_composite().is_empty() {
             self.current_state().set_new_candidate_list(Vec::new());
-            return;
+            return true;
         }
         let mut candidates = get_all_candidates(&self.dictionaries, &composite_key);
         let mut missing_policy = None;
         if candidates.is_empty() {
             if let Some(provider) = self.missing_conversion_provider.as_mut() {
                 let request = conversion::ConversionRequest::new_missing(&composite_key);
-                let response = provider.prepare(&request);
+                let response = match provider.prepare(&request) {
+                    conversion::MissingConversionResponse::Ready(response) => response,
+                    conversion::MissingConversionResponse::Pending => {
+                        self.current_state().set_new_candidate_list(Vec::new());
+                        return false;
+                    }
+                };
                 match conversion::apply_response(&mut candidates, &composite_key, response) {
                     Ok(policy) => missing_policy = Some(policy),
                     Err(error) => self.conversion_error = Some(error),
@@ -602,6 +611,7 @@ impl CskkContext {
         }
         self.current_state().set_new_candidate_list(candidates);
         self.current_state().set_candidate_learning_policy(learning);
+        true
     }
 
     ///
@@ -672,10 +682,13 @@ impl CskkContext {
     }
 
     fn confirm_current_kana_to_composite(&mut self, temporary_input_mode: InputMode) {
-        let kana_like = self
+        let mut kana_like = self
             .current_state_ref()
             .get_to_composite_string()
             .to_owned();
+        if self.current_state_ref().composition_mode == CompositionMode::PreCompositionOkurigana {
+            kana_like.push_str(self.current_state_ref().get_okuri_string());
+        }
         let adjusted = if temporary_input_mode == InputMode::Zenkaku {
             self.ascii_form_changer.adjust_ascii_string(&kana_like)
         } else {
@@ -987,7 +1000,9 @@ impl CskkContext {
                         .is_empty()
                 {
                     // この部分TryNextCandidateと似ているが、事前条件が違うので共通にできなかった。
-                    self.update_candidate_list();
+                    if !self.update_candidate_list() {
+                        return;
+                    }
                     if self.current_state_ref().get_candidate_list().is_empty() {
                         let prev_composition_mode = self.current_state_ref().composition_mode;
                         self.enter_register_mode(prev_composition_mode);
@@ -1451,7 +1466,9 @@ impl CskkContext {
     ) {
         if initial_composition_mode != CompositionMode::CompositionSelection {
             self.output_converted_kana_if_any(initial_input_mode, initial_composition_mode);
-            self.update_candidate_list();
+            if !self.update_candidate_list() {
+                return;
+            }
             if !self
                 .current_state_ref()
                 .get_to_composite_string()
@@ -1571,10 +1588,14 @@ impl CskkContext {
     }
 
     ///
-    /// Returns if that key event can be processed by current CSKK
+    /// Conservative eligibility query; actual processing decides consumption.
+    /// Commands may run side effects while passing a key through.
     /// Only checking, doesn't change internal states
     ///
     pub fn will_process(&self, key_event: &CskkKeyEvent) -> bool {
+        if key_event.is_modifierless_input() && key_event.is_ascii_inputtable() {
+            return true;
+        }
         let current_state = self.current_state_ref();
         let handler = self.get_handler_v2();
         let maybe_instruction = handler.get_instruction(
@@ -1589,7 +1610,11 @@ impl CskkContext {
                 && (self
                     .kana_converter
                     .can_continue(key_event, &current_state.pre_conversion)
-                    || self.kana_converter.can_continue(key_event, &[])))
+                    || self.kana_converter.can_continue(key_event, &[])
+                    || self
+                        .kana_converter
+                        .can_continue_lower(key_event, &current_state.pre_conversion)
+                    || self.kana_converter.can_continue_lower(key_event, &[])))
                 || (!has_rom2kana_in_current_mode && key_event.is_ascii_inputtable()));
 
         maybe_instruction.is_some() || will_be_character_input
@@ -1804,8 +1829,8 @@ impl Display for CskkState {
 mod unit_tests {
     use super::*;
     use crate::cskkstate::PreCompositionData;
+    use crate::keysym::keysyms;
     use crate::testhelper::init_test_logger;
-    use xkbcommon::xkb::keysyms;
 
     fn new_test_context(input_mode: InputMode, composition_mode: CompositionMode) -> CskkContext {
         let dict = Arc::new(

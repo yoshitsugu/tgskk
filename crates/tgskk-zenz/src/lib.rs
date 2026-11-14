@@ -3,11 +3,9 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::os::fd::OwnedFd;
-use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -136,7 +134,7 @@ impl Worker {
 }
 struct Process {
     child: Child,
-    socket: UnixStream,
+    socket: tgskk_process::Stream,
 }
 impl Drop for Process {
     fn drop(&mut self) {
@@ -148,15 +146,7 @@ impl Process {
     fn start(executable: &Path, model: &Path) -> io::Result<Self> {
         std::fs::File::open(model)
             .map_err(|e| io::Error::new(e.kind(), format!("Cannot open Zenz model: {e}")))?;
-        let (socket, child_socket) = UnixStream::pair()?;
-        socket.set_read_timeout(Some(Duration::from_secs(5)))?;
-        socket.set_write_timeout(Some(Duration::from_millis(500)))?;
-        let child = Command::new(executable)
-            .arg(model)
-            .stdin(Stdio::from(OwnedFd::from(child_socket.try_clone()?)))
-            .stdout(Stdio::from(OwnedFd::from(child_socket)))
-            .stderr(Stdio::null())
-            .spawn()
+        let (child, socket) = tgskk_process::spawn(executable, [model.as_os_str()])
             .map_err(|e| io::Error::new(e.kind(), format!("Cannot start Zenz worker: {e}")))?;
         let mut process = Self { child, socket };
         if read_word(&mut process.socket)? != PROTOCOL_MAGIC {
@@ -226,7 +216,7 @@ impl Process {
         Ok(scores)
     }
 }
-fn read_word(socket: &mut UnixStream) -> io::Result<u32> {
+fn read_word(socket: &mut impl Read) -> io::Result<u32> {
     let mut bytes = [0; 4];
     socket.read_exact(&mut bytes)?;
     Ok(u32::from_le_bytes(bytes))
@@ -552,10 +542,10 @@ impl Assistance {
 }
 
 /// Blocking scorer for evaluation tools; never call from a key event handler.
-pub struct Evaluator(Process);
+pub struct Evaluator(Option<Process>);
 impl Evaluator {
     pub fn open(executable: &Path, model: &Path) -> io::Result<Self> {
-        Ok(Self(Process::start(executable, model)?))
+        Ok(Self(Some(Process::start(executable, model)?)))
     }
     pub fn score(
         &mut self,
@@ -566,7 +556,13 @@ impl Evaluator {
         if candidates.len() > MAX_CANDIDATES {
             return Err(io::Error::other("At most eight candidates"));
         }
-        self.0.score(&Key {
+        let process = self.0.as_mut().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Evaluator failed; open a new evaluator",
+            )
+        })?;
+        let result = process.score(&Key {
             epoch: 0,
             context: left.into(),
             reading: katakana.into(),
@@ -578,7 +574,14 @@ impl Evaluator {
                 })
                 .collect(),
             protected: Vec::new(),
-        })
+        });
+        if result
+            .as_ref()
+            .is_err_and(|error| error.kind() != io::ErrorKind::InvalidInput)
+        {
+            self.0 = None;
+        }
+        result
     }
 }
 
@@ -1075,9 +1078,11 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod protocol_tests {
     use super::*;
+    use std::os::unix::net::UnixStream;
+    use std::process::Command;
     fn key() -> Key {
         Key {
             epoch: 0,
@@ -1120,15 +1125,46 @@ mod protocol_tests {
     }
     #[test]
     fn refused_request_leaves_the_stream_usable() {
-        let (mut process, mut server) = pair();
+        let (process, mut server) = pair();
+        let mut evaluator = Evaluator(Some(process));
         server.write_all(&REJECTED_REQUEST.to_le_bytes()).unwrap();
         server.write_all(&1u32.to_le_bytes()).unwrap();
         server.write_all(&(-0.25f64).to_le_bytes()).unwrap();
         assert_eq!(
-            process.score(&key()).unwrap_err().kind(),
+            evaluator
+                .score("駅で", "キシャ", &["汽車".into()])
+                .unwrap_err()
+                .kind(),
             io::ErrorKind::InvalidInput
         );
-        assert_eq!(process.score(&key()).unwrap(), vec![-0.25]);
+        assert_eq!(
+            evaluator.score("駅で", "キシャ", &["汽車".into()]).unwrap(),
+            vec![-0.25]
+        );
+    }
+    #[test]
+    fn evaluator_discards_a_misaligned_or_timed_out_process() {
+        for response in [Some(2u32.to_le_bytes()), None] {
+            let (process, mut server) = pair();
+            let mut evaluator = Evaluator(Some(process));
+            if let Some(response) = response {
+                server.write_all(&response).unwrap();
+            }
+            let error = evaluator
+                .score("駅で", "キシャ", &["汽車".into()])
+                .unwrap_err();
+            assert!(matches!(
+                error.kind(),
+                io::ErrorKind::InvalidData | io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ));
+            assert_eq!(
+                evaluator
+                    .score("駅で", "キシャ", &["汽車".into()])
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::BrokenPipe
+            );
+        }
     }
     #[test]
     fn invalid_count_nan_partial_response_and_stall_fail_closed() {

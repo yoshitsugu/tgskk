@@ -13,7 +13,35 @@ use tgskk_zenz::{Assistance, Status, Worker};
 
 use tgskk_core::input::{CskkDictionary, CskkKeyEvent, InputOutcome, InputSession, ModeChange};
 
+mod persistence;
 mod skkserv;
+
+const PANIC_DIAGNOSTIC: &str = "Rust panic: discard this input session";
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn tgskk_session_may_process(
+    session: *mut TgskkSession,
+    keysym: u32,
+    modifiers: u32,
+) -> i8 {
+    let Some(session) = (unsafe { session.as_mut() }) else {
+        return -1;
+    };
+    if session.poisoned {
+        return -1;
+    }
+    if let Ok(value) = catch_unwind(AssertUnwindSafe(|| {
+        session
+            .input
+            .may_process(&CskkKeyEvent::from_fcitx_keyevent(keysym, modifiers, false))
+    })) {
+        i8::from(value)
+    } else {
+        session.poisoned = true;
+        session.error = diagnostic(PANIC_DIAGNOSTIC);
+        -1
+    }
+}
 
 struct TgskkZenz {
     worker: Worker,
@@ -39,6 +67,8 @@ struct TgskkView {
 struct TgskkSession {
     input: InputSession,
     network_allowed: Rc<Cell<bool>>,
+    lookup_pending: Rc<Cell<bool>>,
+    defer_missing: Rc<Cell<bool>>,
     assistance: Option<Assistance>,
     view: TgskkView,
     committed: CString,
@@ -54,6 +84,8 @@ impl TgskkSession {
         let mut session = Self {
             input,
             network_allowed: Rc::new(Cell::new(false)),
+            lookup_pending: Rc::new(Cell::new(false)),
+            defer_missing: Rc::new(Cell::new(false)),
             assistance: None,
             view: TgskkView {
                 consumed: 0,
@@ -377,6 +409,7 @@ unsafe fn session_action(
         return ptr::null();
     }
     let result = catch_unwind(AssertUnwindSafe(|| {
+        session.lookup_pending.set(false);
         let outcome = action(session);
         if !outcome.consumed {
             session.network_allowed.set(false);
@@ -387,7 +420,7 @@ unsafe fn session_action(
         }
         Ok(())
     }))
-    .unwrap_or_else(|_| Err("Rust panic: discard this input session".to_owned()));
+    .unwrap_or_else(|_| Err(PANIC_DIAGNOSTIC.to_owned()));
     match result {
         Ok(()) => &raw const session.view,
         Err(message) => {
@@ -480,6 +513,63 @@ unsafe extern "C" fn tgskk_candidate_annotation(
         .map_or(ptr::null(), |s| s.as_ptr())
 }
 
+#[unsafe(no_mangle)]
+unsafe extern "C" fn tgskk_session_set_mode(
+    session: *mut TgskkSession,
+    mode: u8,
+) -> *const TgskkView {
+    use tgskk_core::input::InputMode;
+    let mode = match mode {
+        0 => InputMode::Hiragana,
+        1 => InputMode::Katakana,
+        2 => InputMode::HankakuKatakana,
+        3 => InputMode::Zenkaku,
+        4 => InputMode::Ascii,
+        _ => return ptr::null(),
+    };
+    unsafe { session_call(session, |input| input.set_input_mode(mode)) }
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn tgskk_session_defer_missing(session: *mut TgskkSession, enabled: u8) -> u8 {
+    let Some(session) = (unsafe { session.as_mut() }).filter(|s| !s.poisoned) else {
+        return 0;
+    };
+    session.defer_missing.set(enabled != 0);
+    1
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn tgskk_session_lookup_pending(session: *const TgskkSession) -> u8 {
+    unsafe { session.as_ref() }.map_or(0, |session| {
+        u8::from(!session.poisoned && session.lookup_pending.get())
+    })
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn tgskk_runtime_prepend_readonly(
+    runtime: *mut TgskkRuntime,
+    path: *const c_char,
+    encoding: *const c_char,
+    error: *mut *mut c_char,
+) -> u8 {
+    unsafe {
+        u8::from(
+            report(error, || {
+                let runtime = runtime.as_mut().ok_or("Runtime is NULL")?;
+                let dictionary =
+                    CskkDictionary::new_static_dict(string_arg(path)?, string_arg(encoding)?, true)
+                        .map_err(|e| e.to_string())?;
+                #[allow(
+                    clippy::arc_with_non_send_sync,
+                    reason = "Dictionaries stay on their creating thread"
+                )]
+                runtime.dictionaries.insert(0, Arc::new(dictionary));
+                Ok(())
+            })
+            .is_some(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,6 +654,34 @@ mod tests {
             });
         }
         result
+    }
+
+    #[test]
+    fn explicit_mode_transfer_discards_preedit_and_rejects_unknown_modes() {
+        let fixture = Fixture::new();
+        unsafe {
+            keys(fixture.session, "K a n j i space");
+            for (mode, label, committed) in [
+                (0, "あ", "あ"),
+                (1, "ア", "ア"),
+                (2, "ｱ", "ｱ"),
+                (3, "Ａ", "ａ"),
+                (4, "A", "a"),
+            ] {
+                let view = tgskk_session_set_mode(fixture.session, mode);
+                assert!(!view.is_null());
+                assert_eq!(message((*view).mode_label), label);
+                assert_eq!(message((*view).preedit), "");
+                assert_eq!((*view).candidate_count, 0);
+                assert_eq!(message((*keys(fixture.session, "a")).committed), committed);
+            }
+            keys(fixture.session, "a");
+            assert!(tgskk_session_set_mode(fixture.session, 255).is_null());
+            assert_eq!(
+                message((*tgskk_session_view(fixture.session)).mode_label),
+                "A"
+            );
+        }
     }
 
     #[test]
@@ -783,6 +901,7 @@ mod tests {
             assert!(message(tgskk_session_error(fixture.session)).contains("Rust panic"));
             assert!(tgskk_session_key(fixture.session, 97, 0, 0).is_null());
             assert!(tgskk_session_view(fixture.session).is_null());
+            assert_eq!(tgskk_session_may_process(fixture.session, 97, 0), -1);
         }
     }
     #[test]

@@ -137,7 +137,7 @@ static void render(IBusEngine *engine, const TgskkView *view) {
   s.offset = s.list ? resources->config.inlineCandidates : 0;
   if (s.list) {
     auto *table =
-        ibus_lookup_table_new(7, view->selected - s.offset, TRUE, FALSE);
+        ibus_lookup_table_new(tgskk::candidatePageSize, view->selected - s.offset, TRUE, FALSE);
     ibus_lookup_table_set_orientation(table, IBUS_ORIENTATION_VERTICAL);
     for (size_t i = s.offset; i < view->candidate_count; ++i) {
       std::string candidate = tgskk_candidate_text(s.session, i);
@@ -204,35 +204,16 @@ static void page(IBusEngine *engine, bool forward, bool registration) {
   if (!v || !v->selecting || !v->candidate_count) {
     return;
   }
-  size_t target;
-  if (!s.list) {
-    target = std::min(static_cast<size_t>(resources->config.inlineCandidates),
-                      v->candidate_count - 1);
-  } else if (forward) {
-    target = s.offset + ((v->selected - s.offset) / 7 + 1) * 7;
-    if (target >= v->candidate_count) {
-      if (!registration) {
-        return;
-      }
-      v = tgskk_session_choose(s.session, v->candidate_count - 1);
-      render(engine,
-             v ? tgskk_session_key(s.session, IBUS_KEY_space, 0, 0) : nullptr);
-      return;
-    }
-  } else {
-    const auto current = (v->selected - s.offset) / 7;
-    if (current) {
-      target = s.offset + (current - 1) * 7;
-    } else if (s.offset) {
-      target = s.offset - 1;
-    } else {
-      v = tgskk_session_choose(s.session, 0);
-      render(engine,
-             v ? tgskk_session_key(s.session, IBUS_KEY_x, 0, 0) : nullptr);
-      return;
-    }
-  }
-  render(engine, tgskk_session_choose(s.session, target));
+  const auto move = tgskk::candidatePageMove(v->candidate_count, v->selected,
+      static_cast<size_t>(resources->config.inlineCandidates), forward, registration);
+  if (move.kind == tgskk::CandidateMoveKind::Stay)
+    return;
+  v = tgskk_session_choose(s.session, move.index);
+  if (v && move.kind == tgskk::CandidateMoveKind::Register)
+    v = tgskk_session_key(s.session, IBUS_KEY_space, 0, 0);
+  else if (v && move.kind == tgskk::CandidateMoveKind::ReturnToReading)
+    v = tgskk_session_key(s.session, IBUS_KEY_x, 0, 0);
+  render(engine, v);
 }
 static bool initialize(State &s) {
   if (s.session) {
@@ -307,15 +288,13 @@ static gboolean key(IBusEngine *engine, guint symbol, guint, guint modifiers) {
     }
     if (symbol == IBUS_KEY_Down || symbol == IBUS_KEY_Up) {
       const auto target =
-          symbol == IBUS_KEY_Down
-              ? std::min(v->selected + 1, v->candidate_count - 1)
-              : (v->selected ? v->selected - 1 : 0);
+          tgskk::candidateStep(v->candidate_count, v->selected, symbol == IBUS_KEY_Down);
       render(engine, tgskk_session_choose(s.session, target));
       return TRUE;
     }
-    if (s.list && symbol >= IBUS_KEY_1 && symbol <= IBUS_KEY_7) {
+    if (s.list && symbol >= IBUS_KEY_1 && symbol < IBUS_KEY_1 + tgskk::candidatePageSize) {
       const auto index =
-          s.offset + ((v->selected - s.offset) / 7) * 7 + symbol - IBUS_KEY_1;
+          tgskk::candidatePageStart(v->selected, s.offset) + symbol - IBUS_KEY_1;
       if (index < v->candidate_count) {
         render(engine, tgskk_session_select(s.session, index));
       }
@@ -403,10 +382,10 @@ static void clicked(IBusEngine *engine, guint index, guint button, guint) {
   }
   context(engine);
   const auto *v = tgskk_session_view(s.session);
-  if (!v || !v->selecting || index >= 7) {
+  if (!v || !v->selecting || index >= tgskk::candidatePageSize) {
     return;
   }
-  const auto target = s.offset + ((v->selected - s.offset) / 7) * 7 + index;
+  const auto target = tgskk::candidatePageStart(v->selected, s.offset) + index;
   if (target < v->candidate_count) {
     render(engine, tgskk_session_select(s.session, target));
   }

@@ -11,5 +11,8 @@ tgskk-core = { path = "../tgskk-core", version = "0.1.0" }
 [dev-dependencies]
 tempfile = "3.3"
 
+[target.'cfg(any(unix, windows))'.dependencies]
+tgskk-process = { path = "../tgskk-process", version = "0.1.0" }
+
 [lints]
 workspace = true
