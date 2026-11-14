@@ -1,0 +1,25 @@
+name: Workflow quality
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Install actionlint and ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+      - name: Check workflows and shell scripts
+        run: bash scripts/lint-ci.sh

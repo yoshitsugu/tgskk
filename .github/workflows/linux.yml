@@ -9,6 +9,10 @@ concurrency:
   group: linux-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  cpp-quality:
+    uses: ./.github/workflows/cpp-quality.yml
+  workflow-quality:
+    uses: ./.github/workflows/workflow-quality.yml
   quality:
     uses: ./.github/workflows/rust-quality.yml
     with:
@@ -53,7 +57,7 @@ jobs:
           if-no-files-found: error
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [package, quality]
+    needs: [package, quality, cpp-quality, workflow-quality]
     runs-on: ubuntu-latest
     permissions:
       contents: write

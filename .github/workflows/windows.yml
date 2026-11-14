@@ -263,9 +263,15 @@ jobs:
     uses: ./.github/workflows/rust-quality.yml
     with:
       baseline-ref: HEAD^
+  release-cpp-quality:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+    uses: ./.github/workflows/cpp-quality.yml
+  release-workflow-quality:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+    uses: ./.github/workflows/workflow-quality.yml
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
-    needs: [worker, desktop, release-quality]
+    needs: [worker, desktop, release-quality, release-cpp-quality, release-workflow-quality]
     runs-on: ubuntu-latest
     permissions:
       actions: read

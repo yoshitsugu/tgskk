@@ -1,12 +1,11 @@
 name: C++ quality
 on:
-  push:
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: cpp-quality-${{ github.ref }}
+  group: cpp-quality-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   format:
