@@ -19,6 +19,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      - name: Check installer test script
+        shell: pwsh
+        run: |
+          $parseTokens = $null
+          $parseErrors = $null
+          [Management.Automation.Language.Parser]::ParseFile("$pwd/scripts/test-windows-installer.ps1", [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          Import-Module PSScriptAnalyzer -RequiredVersion 1.25.0
+          $issues = @(Invoke-ScriptAnalyzer -Path scripts/test-windows-installer.ps1 -IncludeRule PSAvoidAssignmentToAutomaticVariable)
+          if ($issues.Count) { throw ($issues | Out-String) }
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal
       - name: Prepare verified worker sources and model

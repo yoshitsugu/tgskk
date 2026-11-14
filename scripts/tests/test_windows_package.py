@@ -9,6 +9,7 @@ import tempfile
 import tomllib
 import unittest
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import importlib.util
@@ -158,6 +159,13 @@ class StageWindowsTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             stage_windows.main(self._argv())
         self.assertEqual(archive.read_bytes(), b"existing archive")
+
+    def test_zip_write_failure_leaves_no_partial_archive(self):
+        with patch.object(zipfile.ZipFile, "write", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                stage_windows.main(self._argv())
+        self.assertFalse((self.output / "payload").exists())
+        self.assertEqual(list(self.output.glob("*.zip")), [])
 
     def test_missing_binary(self):
         (self.binaries / "tgskk-tip.dll").unlink()
