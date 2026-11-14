@@ -1,3 +1,4 @@
+#include "account.h"
 #include "broker_platform.h"
 #include <fstream>
 #include <iostream>
@@ -25,9 +26,10 @@ int main() {
     auto config =
         Config::load(directory.wstring(),
                      (directory / L"bin" / L"tgskk-broker.exe").wstring());
-    require(config.model == (directory / L"bin" / L"models" /
-                             L"zenz-v3.2-small-Q5_K_M.gguf")
-                                .wstring(),
+    require(canonicalPath(config.model) ==
+                canonicalPath((directory / L"bin" / L"models" /
+                               L"zenz-v3.2-small-Q5_K_M.gguf")
+                                  .wstring()),
             "shared model fallback");
     std::filesystem::create_directories(directory);
     std::ofstream(directory / L"SKK-JISYO.user", std::ios::binary)
@@ -44,11 +46,46 @@ int main() {
                 loaded.host == "localhost" && loaded.port == 1179 &&
                 loaded.inlineCandidates == 0 && loaded.encoding == "utf-8",
             "settings round trip");
-    std::ofstream(directory / L"models") << "block unused default model lookup";
-    require(Config::load(directory.wstring(), config.broker).model ==
-                config.model,
-            "explicit model was blocked by an unused default path");
     const auto original = read(directory / L"windows.ini");
+    const auto userModels = directory / L"models";
+    std::filesystem::create_directories(userModels);
+    const auto unusedModel = userModels / L"zenz-v3.2-small-Q5_K_M.gguf";
+    std::ofstream(unusedModel) << "inaccessible unused model fixture";
+    HANDLE rawToken = nullptr;
+    require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &rawToken),
+            "query token");
+    Handle token(rawToken);
+    DWORD size = 0;
+    GetTokenInformation(token.value, TokenUser, nullptr, 0, &size);
+    std::vector<uint8_t> user(size);
+    require(
+        GetTokenInformation(token.value, TokenUser, user.data(), size, &size),
+        "current user SID");
+    const auto sid = reinterpret_cast<TOKEN_USER *>(user.data())->User.Sid;
+    {
+      test::FileAccess denyDirectory(userModels.wstring(), sid,
+                                     FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+                                     NO_INHERITANCE, DENY_ACCESS);
+      test::FileAccess denyFile(unusedModel.wstring(), sid,
+                                FILE_READ_ATTRIBUTES, NO_INHERITANCE,
+                                DENY_ACCESS);
+      std::error_code error;
+      (void)std::filesystem::is_regular_file(unusedModel, error);
+      require(error == std::errc::permission_denied ||
+                  error.value() == ERROR_ACCESS_DENIED,
+              "fixture did not deny model attributes");
+      std::ofstream(directory / L"windows.ini")
+          << "[General]\nAI=false\nSkkserv=Disabled\n";
+      require(!Config::load(directory.wstring(), config.broker).ai,
+              "unused model blocked disabled AI");
+      std::ofstream(directory / L"windows.ini")
+          << "[General]\nAI=true\nModel=" << utf8(config.model) << "\n";
+      require(Config::load(directory.wstring(), config.broker).model ==
+                  config.model,
+              "unused default model blocked an explicit model");
+      require(denyFile.close() && denyDirectory.close(), "model ACL rollback");
+    }
+    std::ofstream(directory / L"windows.ini", std::ios::binary) << original;
     for (int fault = 0; fault < 4; ++fault) {
       auto invalid = config;
       if (fault == 0)

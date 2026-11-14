@@ -3,9 +3,9 @@ $ErrorActionPreference = 'Stop'
 $Installer = (Resolve-Path $Installer).Path
 $Payload = (Resolve-Path $Payload).Path
 $directory = Join-Path $env:ProgramFiles 'tgskk'
-$home = Join-Path $env:LOCALAPPDATA 'tgskk'
+$configurationDirectory = Join-Path $env:LOCALAPPDATA 'tgskk'
 $registry = 'HKLM:\Software\Classes\CLSID\{C7993BD4-1094-4968-A311-3DB8A0E01739}\InprocServer32'
-if ((Test-Path $directory) -or (Test-Path $home) -or (Test-Path $registry)) {
+if ((Test-Path $directory) -or (Test-Path $configurationDirectory) -or (Test-Path $registry)) {
   throw 'Installer test requires a clean, disposable Windows environment'
 }
 function Run-Installer {
@@ -27,16 +27,16 @@ try {
       throw "Installed file hash mismatch: $installed"
     }
   }
-  New-Item $home -ItemType Directory | Out-Null
+  New-Item $configurationDirectory -ItemType Directory | Out-Null
   $utf8 = [Text.UTF8Encoding]::new($false)
-  [IO.File]::WriteAllText((Join-Path $home 'windows.ini'), "[General]`nAI=false`nSkkserv=Disabled`n", $utf8)
-  [IO.File]::WriteAllText((Join-Path $home 'SKK-JISYO.user'), ";; learning sentinel`n", $utf8)
-  [IO.File]::WriteAllText((Join-Path $home 'SKK-JISYO.user.BAK'), 'backup sentinel', $utf8)
+  [IO.File]::WriteAllText((Join-Path $configurationDirectory 'windows.ini'), "[General]`nAI=false`nSkkserv=Disabled`n", $utf8)
+  [IO.File]::WriteAllText((Join-Path $configurationDirectory 'SKK-JISYO.user'), ";; learning sentinel`n", $utf8)
+  [IO.File]::WriteAllText((Join-Path $configurationDirectory 'SKK-JISYO.user.BAK'), 'backup sentinel', $utf8)
   $before = @{}
-  Get-ChildItem $home -File | ForEach-Object { $before[$_.Name] = (Get-FileHash $_.FullName).Hash }
+  Get-ChildItem $configurationDirectory -File | ForEach-Object { $before[$_.Name] = (Get-FileHash $_.FullName).Hash }
   Run-Installer
   foreach ($name in $before.Keys) {
-    if ((Get-FileHash (Join-Path $home $name)).Hash -ne $before[$name]) { throw "Upgrade changed $name" }
+    if ((Get-FileHash (Join-Path $configurationDirectory $name)).Hash -ne $before[$name]) { throw "Upgrade changed $name" }
   }
   $handle = [IO.File]::Open((Join-Path $directory 'tgskk-broker.exe'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
   try {
@@ -94,11 +94,11 @@ public static class TgskkWindowProbe {
   if ($removed.ExitCode -ne 0) { throw "Uninstaller failed: $($removed.ExitCode)" }
   if (Test-Path $registry) { throw 'Uninstall retained TSF registration' }
   foreach ($name in $before.Keys) {
-    if ((Get-FileHash (Join-Path $home $name)).Hash -ne $before[$name]) { throw "Uninstall changed $name" }
+    if ((Get-FileHash (Join-Path $configurationDirectory $name)).Hash -ne $before[$name]) { throw "Uninstall changed $name" }
   }
 } finally {
   if (Test-Path (Join-Path $directory 'unins000.exe')) {
     Start-Process (Join-Path $directory 'unins000.exe') -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
   }
-  if (Test-Path $home) { Remove-Item $home -Recurse -Force }
+  if (Test-Path $configurationDirectory) { Remove-Item $configurationDirectory -Recurse -Force }
 }

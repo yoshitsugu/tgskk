@@ -69,8 +69,9 @@ def stage(args: argparse.Namespace) -> None:
     if payload.exists():
         raise FileExistsError(f"{payload}: already exists")
 
+    payload.mkdir(parents=True)
+    created_archive = False
     try:
-        payload.mkdir(parents=True)
 
         for name in REQUIRED_BINARIES:
             src = args.binaries / name
@@ -142,7 +143,7 @@ def stage(args: argparse.Namespace) -> None:
             target.mkdir()
             notices = [path for path in crate.iterdir()
                        if path.name.lower().startswith(("license", "licence", "copying", "copyright", "notice"))]
-            explicit = package.get("license-file")
+            explicit = package.get("license-file", package.get("license_file"))
             if explicit:
                 notice = (crate / explicit).resolve()
                 notice.relative_to(crate.resolve())
@@ -187,12 +188,16 @@ def stage(args: argparse.Namespace) -> None:
 
         # ZIP with tgskk/ prefix
         archive = args.output / f"tgskk-{version}-windows-x64.zip"
-        with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as zf:
-            for path in payload.rglob("*"):
-                if path.is_file():
-                    arcname = "tgskk/" + path.relative_to(payload).as_posix()
-                    zf.write(path, arcname)
+        with archive.open("xb") as destination:
+            created_archive = True
+            with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as zf:
+                for path in sorted(payload.rglob("*")):
+                    if path.is_file():
+                        arcname = "tgskk/" + path.relative_to(payload).as_posix()
+                        zf.write(path, arcname)
     except Exception:
+        if created_archive:
+            archive.unlink(missing_ok=True)
         if payload.exists():
             shutil.rmtree(payload, ignore_errors=True)
         raise

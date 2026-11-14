@@ -21,7 +21,8 @@ class FileAccess {
   PACL oldAcl = nullptr;
 
 public:
-  FileAccess(const std::wstring &name, PSID user, DWORD access, DWORD inherit)
+  FileAccess(const std::wstring &name, PSID user, DWORD access, DWORD inherit,
+             ACCESS_MODE mode = GRANT_ACCESS)
       : path(name) {
     checked(GetNamedSecurityInfoW(path.data(), SE_FILE_OBJECT,
                                   DACL_SECURITY_INFORMATION, nullptr, nullptr,
@@ -29,7 +30,7 @@ public:
             "Read test file security");
     EXPLICIT_ACCESSW entry{};
     entry.grfAccessPermissions = access;
-    entry.grfAccessMode = GRANT_ACCESS;
+    entry.grfAccessMode = mode;
     entry.grfInheritance = inherit;
     entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
     entry.Trustee.ptstrName = static_cast<LPWSTR>(user);
@@ -47,7 +48,7 @@ public:
       LocalFree(previous);
       previous = nullptr;
       SetLastError(changed);
-      checked(false, "Grant test file access");
+      checked(false, "Set test file access");
     }
   }
   bool close() noexcept {

@@ -93,7 +93,7 @@ begin
     Filename := ExpandConstant('{app}\tgskk-tip.dll');
     if not UnregisterServer(True, Filename, True) then begin
       try
-        RegisterServer(True, Filename, False);
+        RegisterServer(True, Filename, True);
       except
         Log('Could not restore TSF registration: ' + GetExceptionMessage);
       end;

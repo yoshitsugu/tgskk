@@ -388,9 +388,8 @@ static Config parseConfig(const std::wstring &directory,
     throw std::runtime_error("Invalid SKK server mode");
   if (!explicitModel) {
     std::error_code error;
-    const bool userModel = std::filesystem::is_regular_file(c.model, error);
-    if (!userModel &&
-        (!error || error == std::errc::no_such_file_or_directory)) {
+    const auto userModel = std::filesystem::status(c.model, error);
+    if (userModel.type() == std::filesystem::file_type::not_found) {
       const auto shared = sibling / L"models" / L"zenz-v3.2-small-Q5_K_M.gguf";
       if (std::filesystem::is_regular_file(shared, error))
         c.model = shared.wstring();
