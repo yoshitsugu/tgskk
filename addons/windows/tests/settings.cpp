@@ -18,6 +18,11 @@ int main() {
                                (directory / L"tgskk-broker.exe").wstring());
     window = createSettingsWindow(GetModuleHandleW(nullptr), config, false);
     require(window != nullptr, "settings window");
+    require(SendMessageW(GetDlgItem(window, IDC_SKKSERV_WITHOUT_SCOPE_CHECK),
+                         BM_GETCHECK, 0, 0) == BST_UNCHECKED,
+            "missing-scope server GUI default");
+    SendMessageW(GetDlgItem(window, IDC_SKKSERV_WITHOUT_SCOPE_CHECK),
+                 BM_SETCHECK, BST_CHECKED, 0);
     for (const auto id : {IDC_DICTIONARY_EDIT, IDC_AI_CHECK, IDC_PORT_EDIT,
                           IDC_SAVE, IDC_STATUS})
       require(GetDlgItem(window, id) != nullptr, "missing control");
@@ -26,7 +31,7 @@ int main() {
                  0);
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(IDC_SAVE, BN_CLICKED), 0);
     auto saved = Config::load(directory.wstring(), config.broker);
-    require(saved.inlineCandidates == 7 && !saved.ai,
+    require(saved.inlineCandidates == 7 && !saved.ai && saved.skkservWithoutInputScope,
             "GUI did not save controls");
     require(GetWindowTextLengthW(GetDlgItem(window, IDC_STATUS)) > 0,
             "no save feedback");

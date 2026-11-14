@@ -1593,6 +1593,9 @@ impl CskkContext {
     /// Only checking, doesn't change internal states
     ///
     pub fn will_process(&self, key_event: &CskkKeyEvent) -> bool {
+        if key_event.get_modifier().contains(SkkKeyModifier::RELEASE) {
+            return false;
+        }
         if key_event.is_modifierless_input() && key_event.is_ascii_inputtable() {
             return true;
         }
@@ -1603,6 +1606,22 @@ impl CskkContext {
             &current_state.input_mode,
             &current_state.composition_mode,
         );
+        // Single no-op commands neither consume a key nor run side effects.
+        // Query command semantics rather than special-casing physical keys:
+        // Delete also covers C-h, and ConfirmDirect also covers C-m.
+        // Multi-instruction rules remain conservative because earlier commands
+        // can change state before a later command passes the key through.
+        let will_run_command = match maybe_instruction.as_deref() {
+            Some([Instruction::Delete])
+                if current_state.composition_mode == CompositionMode::Direct =>
+            {
+                !current_state.pre_conversion.is_empty()
+                    || !current_state.get_confirmed_string().is_empty()
+            }
+            Some([Instruction::ConfirmDirect]) => self.state_stack.len() > 1,
+            Some(_) => true,
+            None => false,
+        };
         let has_rom2kana_in_current_mode =
             has_rom2kana_conversion(&current_state.input_mode, &current_state.composition_mode);
         let will_be_character_input = key_event.is_modifierless_input()
@@ -1617,7 +1636,7 @@ impl CskkContext {
                     || self.kana_converter.can_continue_lower(key_event, &[])))
                 || (!has_rom2kana_in_current_mode && key_event.is_ascii_inputtable()));
 
-        maybe_instruction.is_some() || will_be_character_input
+        will_run_command || will_be_character_input
     }
 
     fn get_handler_v2(&self) -> &ConfigurableCommandHandler {

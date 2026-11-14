@@ -35,6 +35,7 @@ enum : int {
   IDC_SAVE,
   IDC_CLOSE,
   IDC_STATUS,
+  IDC_SKKSERV_WITHOUT_SCOPE_CHECK,
 };
 
 HWND createSettingsWindow(HINSTANCE instance, const Config &config,

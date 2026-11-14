@@ -24,8 +24,16 @@ Elevated applications, AppContainer applications, secure desktop, UI-less mode,
 candidate selection and Windows language-bar controls are not implemented.
 ASCII mode commits each printable key through a short TSF composition;
 application completion and undo behavior may differ from ordinary keyboard input.
-Fields whose InputScope query fails disable input, as do password/private fields.
-AI and network access require a known non-private scope and a collapsed selection.
+Unavailable optional InputScope metadata permits local dictionary input and local AI.
+Password/PIN/private scopes, malformed descriptors and operational query
+failures disable input.
+AI requires a collapsed selection; network access additionally requires a known
+non-private scope by default. `SkkservWithoutInputScope=true` opts into server
+lookups when optional scope metadata is unavailable (including `E_FAIL`). This
+does not override password/PIN/private scopes, malformed descriptors, operational
+failures, or explicit unknown scope values. The settings window exposes the same
+option, disabled by default. Explicit unknown scope descriptors disable both
+forms of assistance.
 Only bounded text left of the caret is used for local AI; servers receive readings,
 never surrounding text.
 
@@ -114,6 +122,7 @@ Dictionary=C:\dictionaries\SKK-JISYO.L
 Encoding=euc-jp
 AI=true
 Skkserv=Google
+SkkservWithoutInputScope=false
 ```
 
 AI and Google lookup are enabled by default. Missing optional binaries or a

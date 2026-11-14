@@ -192,6 +192,69 @@ impl InputSession {
 mod eligibility_tests {
     use super::*;
     #[test]
+    fn idle_editing_commands_pass_through_in_every_input_mode() {
+        for mode in [
+            InputMode::Hiragana,
+            InputMode::Katakana,
+            InputMode::HankakuKatakana,
+            InputMode::Zenkaku,
+            InputMode::Ascii,
+        ] {
+            let mut input = InputSession::with_dictionaries(vec![]).unwrap();
+            cskk::skk_context_set_input_mode_rs(&mut input.context, mode);
+            for (symbol, modifiers) in [
+                (0xff08, 0),
+                (0xff0d, 0),
+                (u32::from(b'h'), 4),
+                (u32::from(b'H'), 4),
+                (u32::from(b'm'), 4),
+            ] {
+                let event = CskkKeyEvent::from_fcitx_keyevent(symbol, modifiers, false);
+                for _ in 0..3 {
+                    assert!(
+                        !input.may_process(&event),
+                        "idle command intercepted: {mode:?} {symbol:#x}/{modifiers}"
+                    );
+                }
+                let outcome = input.process_key(&event);
+                assert!(!outcome.consumed);
+                assert!(outcome.committed.is_empty() && outcome.preedit.is_empty());
+                assert!(outcome.mode_change.is_none());
+            }
+        }
+    }
+    #[test]
+    fn editing_queries_preserve_pending_input_and_registration() {
+        let mut input = InputSession::with_dictionaries(vec![]).unwrap();
+        let backspace = CskkKeyEvent::from_fcitx_keyevent(0xff08, 0, false);
+        let enter = CskkKeyEvent::from_fcitx_keyevent(0xff0d, 0, false);
+        let type_key = |input: &mut InputSession, symbol: u8| {
+            input.process_key(&CskkKeyEvent::from_fcitx_keyevent(
+                u32::from(symbol),
+                0,
+                false,
+            ))
+        };
+        type_key(&mut input, b'k');
+        let release = CskkKeyEvent::from_fcitx_keyevent(u32::from(b'a'), 0, true);
+        assert!(!input.may_process(&release));
+        let released = input.process_key(&release);
+        assert!(!released.consumed && released.preedit == "k");
+        assert!(input.may_process(&backspace));
+        assert!(input.process_key(&backspace).consumed);
+        assert!(!input.may_process(&backspace));
+        type_key(&mut input, b'a');
+        assert!(!input.may_process(&backspace));
+        type_key(&mut input, b'K');
+        type_key(&mut input, b'a');
+        type_key(&mut input, b' ');
+        assert!(
+            input.may_process(&enter),
+            "nested registration cannot be confirmed"
+        );
+        assert!(input.process_key(&enter).consumed);
+    }
+    #[test]
     fn ineligible_keys_are_never_consumed_across_modes_and_compositions() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples/SKK-JISYO.demo.utf8");

@@ -32,6 +32,7 @@ int main() {
                                   .wstring()),
             "shared model fallback");
     std::filesystem::create_directories(directory);
+    require(!config.skkservWithoutInputScope, "missing-scope server must default off");
     std::ofstream(directory / L"SKK-JISYO.user", std::ios::binary)
         << "learned-dictionary";
     config.ai = false;
@@ -40,13 +41,29 @@ int main() {
     config.port = 1179;
     config.encoding = "utf-8";
     config.inlineCandidates = 0;
+    config.skkservWithoutInputScope = true;
     Config::save(config);
     auto loaded = Config::load(directory.wstring(), config.broker);
     require(!loaded.ai && loaded.server == "Custom" &&
                 loaded.host == "localhost" && loaded.port == 1179 &&
-                loaded.inlineCandidates == 0 && loaded.encoding == "utf-8",
+                loaded.inlineCandidates == 0 && loaded.encoding == "utf-8" &&
+                loaded.skkservWithoutInputScope,
             "settings round trip");
     const auto original = read(directory / L"windows.ini");
+    std::ofstream(directory / L"windows.ini")
+        << "[General]\nSkkservWithoutInputScope=false\n";
+    require(!Config::load(directory.wstring(), config.broker).skkservWithoutInputScope,
+            "explicit missing-scope server opt-out");
+    std::ofstream(directory / L"windows.ini")
+        << "[General]\nSkkservWithoutInputScope=invalid\n";
+    bool invalidScopeSetting = false;
+    try {
+      (void)Config::load(directory.wstring(), config.broker);
+    } catch (const std::exception &) {
+      invalidScopeSetting = true;
+    }
+    require(invalidScopeSetting, "invalid missing-scope server setting accepted");
+    std::ofstream(directory / L"windows.ini", std::ios::binary) << original;
     const auto userModels = directory / L"models";
     std::filesystem::create_directories(userModels);
     const auto unusedModel = userModels / L"zenz-v3.2-small-Q5_K_M.gguf";

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../common/candidates.h"
 #include "broker_client.h"
+#include "input_scope.h"
 #include "tgskk.h"
 #include "tsf_compat.h"
 #include <algorithm>
@@ -362,6 +363,7 @@ class Service final : public ITfTextInputProcessorEx,
     return session->key(symbol, modifiers);
   }
   size_t inlineCandidates = tgskk::defaultInlineCandidates;
+  bool skkservWithoutInputScope = false;
   static constexpr size_t pageSize = tgskk::candidatePageSize;
   bool disabled(ITfContext *context) {
     ITfCompartmentMgr *compartments = nullptr;
@@ -518,6 +520,7 @@ public:
       const auto config =
           tgskk::windows::Config::load(tgskk::windows::homeDirectory(), broker);
       inlineCandidates = config.inlineCandidates;
+      skkservWithoutInputScope = config.skkservWithoutInputScope;
       session =
           std::make_unique<tgskk::windows::Input>(config, module, &objects);
       ++inputEpoch;
@@ -858,49 +861,32 @@ public:
       return TF_E_DISCONNECTED;
     }
     session->context("", false, false);
-    bool knownScope = false;
+    bool networkAllowed = false;
+    bool localAi = false;
     if (!reset) {
       ITfReadOnlyProperty *property = nullptr;
       HRESULT scopeResult =
           context->GetAppProperty(GUID_PROP_INPUTSCOPE, &property);
+      tgskk::windows::InputScopePolicy policy;
       if (FAILED(scopeResult) || !property) {
-        release(range);
-        return reportFailure("input scope property",
-                             FAILED(scopeResult) ? scopeResult : E_FAIL);
-      }
-      if (SUCCEEDED(scopeResult) && property) {
+        release(property);
+        policy = tgskk::windows::unavailableInputScope(scopeResult);
+      } else {
         VARIANT value;
         VariantInit(&value);
         scopeResult = property->GetValue(cookie, range, &value);
-        bool sensitive = false;
-        if (SUCCEEDED(scopeResult) && value.vt == VT_UNKNOWN && value.punkVal) {
-          ITfInputScope *scope = nullptr;
-          scopeResult = value.punkVal->QueryInterface(
-              IID_ITfInputScope, reinterpret_cast<void **>(&scope));
-          if (SUCCEEDED(scopeResult)) {
-            InputScope *scopes = nullptr;
-            UINT count = 0;
-            scopeResult = scope->GetInputScopes(&scopes, &count);
-            knownScope = SUCCEEDED(scopeResult) && count > 0;
-            if (SUCCEEDED(scopeResult))
-              for (UINT i = 0; i < count; ++i)
-                if (scopes[i] == IS_PASSWORD || scopes[i] == IS_PRIVATE)
-                  sensitive = true;
-            CoTaskMemFree(scopes);
-            release(scope);
-          }
-        }
+        policy = tgskk::windows::inputScopePolicy(scopeResult, value);
         VariantClear(&value);
         release(property);
-        if (sensitive || FAILED(scopeResult)) {
-          release(range);
-          return reportFailure("input scope", FAILED(scopeResult)
-                                                  ? scopeResult
-                                                  : E_ACCESSDENIED);
-        }
       }
+      if (FAILED(policy.status)) {
+        release(range);
+        return reportFailure("input scope", policy.status);
+      }
+      networkAllowed = policy.networkAllowed(skkservWithoutInputScope);
+      localAi = policy.localAi;
     }
-    if (!reset && knownScope) {
+    if (!reset && localAi) {
       TF_SELECTION current{};
       ULONG fetched = 0;
       BOOL collapsed = FALSE;
@@ -934,7 +920,7 @@ public:
           release(range);
           return TF_E_DISCONNECTED;
         }
-        session->context(utf8(surrounding), true, true);
+        session->context(utf8(surrounding), true, networkAllowed);
       }
     }
     if (!currentInput()) {

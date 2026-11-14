@@ -58,3 +58,6 @@ Windows callers use bundled rules or an explicit rule directory.
 The read-only eligibility query includes uppercase kana starts and ASCII
 fallback input. It is conservative: the processing result still determines
 whether a key is consumed, since commands may pass keys through after effects.
+Single Delete and ConfirmDirect commands that cannot act on the current state
+are excluded without mutating the context. This covers physical editing keys
+and their control-key bindings consistently; key releases are also excluded.

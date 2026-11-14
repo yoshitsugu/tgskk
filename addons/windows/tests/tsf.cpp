@@ -423,6 +423,33 @@ void pump() {
     Sleep(2);
   }
 }
+void idleEditingKeys(ITfKeyEventSink *keys, ITfContext *context, Store *store) {
+  for (unsigned modifiers : {0u, 1u, 2u, 3u}) {
+    BYTE state[256] = {};
+    if (modifiers & 1)
+      state[VK_SHIFT] = state[VK_LSHIFT] = 0x80;
+    if (modifiers & 2)
+      state[VK_CONTROL] = state[VK_LCONTROL] = 0x80;
+    require(SetKeyboardState(state), "application editing key state");
+    for (UINT code : {VK_BACK, VK_RETURN, VK_TAB, VK_ESCAPE, VK_LEFT, VK_UP,
+                      VK_RIGHT, VK_DOWN, VK_PRIOR, VK_NEXT, VK_HOME, VK_END,
+                      VK_DELETE}) {
+      const LPARAM scan = 1 | (MapVirtualKeyW(code, MAPVK_VK_TO_VSC) << 16);
+      const auto before = store->startedCompositions;
+      BOOL eligible = TRUE, consumed = TRUE;
+      require(SUCCEEDED(keys->OnTestKeyDown(context, code, scan, &eligible)) &&
+                  !eligible,
+              "idle application editing key was eligible");
+      require(SUCCEEDED(keys->OnKeyDown(context, code, scan, &consumed)) &&
+                  !consumed,
+              "idle application editing key was consumed");
+      require(store->startedCompositions == before,
+              "idle application editing key started a composition");
+    }
+  }
+  BYTE clear[256] = {};
+  require(SetKeyboardState(clear), "restore editing key state");
+}
 struct RegistrationGuard {
   HRESULT(WINAPI *remove)();
   bool active = false;
@@ -712,6 +739,7 @@ int run(int argc, char **argv) {
             "unhandled key started a composition");
     require(store->text.empty(), "unhandled key changed document");
     store->refuseComposition = false;
+    idleEditingKeys(direct, context, store);
     require(SUCCEEDED(captured.close()), "revoke capturing factory");
     BYTE clearState[256] = {};
     require(SetKeyboardState(clearState), "restore key state");
@@ -823,30 +851,33 @@ int run(int argc, char **argv) {
     require(SUCCEEDED(captured.close()), "close reentrant factory");
     std::puts("Deactivation during host reads leaves document unchanged.");
   } else if (mode == "--ai") {
-    auto convert = [&](const std::wstring &prefix) {
-      store->replace(prefix);
-      pump();
-      require(key('K', true) && key('I') && key('S') && key('H') && key('A') &&
-                  key(VK_SPACE),
-              "contextual conversion keys");
-    };
-    bool train = false;
-    for (unsigned attempt = 0; attempt < 5; ++attempt) {
-      convert(L"駅で");
-      train = store->text == L"駅で▼汽車";
-      if (train)
-        break;
-      terminate(true);
+    for (bool missingScope : {false, true}) {
+      store->setScope(IS_DEFAULT, missingScope);
+      auto convert = [&](const std::wstring &prefix) {
+        store->replace(prefix);
+        pump();
+        require(key('K', true) && key('I') && key('S') && key('H') && key('A') &&
+                    key(VK_SPACE),
+                "contextual conversion keys");
+      };
+      bool train = false;
+      for (unsigned attempt = 0; attempt < 5; ++attempt) {
+        convert(L"駅で");
+        train = store->text == L"駅で▼汽車";
+        if (train)
+          break;
+        terminate(true);
+      }
+      require(train, "native TSF did not use left context for train ranking");
+      require(key(VK_RETURN), "commit contextual train");
+      require(store->text == L"駅で汽車", "contextual train commit");
+      convert(L"新聞の");
+      require(store->text == L"新聞の▼記者",
+              "native TSF retained stale train context");
+      require(key(VK_RETURN), "commit contextual reporter");
+      require(store->text == L"新聞の記者", "contextual reporter commit");
+      std::puts("Native TSF surrounding-text AI ranking and commit passed.");
     }
-    require(train, "native TSF did not use left context for train ranking");
-    require(key(VK_RETURN), "commit contextual train");
-    require(store->text == L"駅で汽車", "contextual train commit");
-    convert(L"新聞の");
-    require(store->text == L"新聞の▼記者",
-            "native TSF retained stale train context");
-    require(key(VK_RETURN), "commit contextual reporter");
-    require(store->text == L"新聞の記者", "contextual reporter commit");
-    std::puts("Native TSF surrounding-text AI ranking and commit passed.");
   } else if (mode.empty()) {
     require(key('K', true), "uppercase kana rejected");
     require(key('A'), "kana continuation");
@@ -859,7 +890,9 @@ int run(int argc, char **argv) {
     require(store->text.empty(), "focus retained preedit");
     require(!key('K', false, true), "Win shortcut consumed");
     require(store->text.empty(), "Win shortcut changed document");
-    for (auto scope : {IS_PASSWORD, IS_PRIVATE}) {
+    for (auto scope : {IS_PASSWORD, IS_PRIVATE, IS_NUMERIC_PASSWORD,
+                       IS_NUMERIC_PIN, IS_ALPHANUMERIC_PIN,
+                       IS_ALPHANUMERIC_PIN_SET}) {
       store->setScope(scope);
       pump();
       require(!key('K', true), "sensitive field consumed input");
@@ -867,8 +900,10 @@ int run(int argc, char **argv) {
     }
     store->setScope(IS_DEFAULT, true);
     pump();
-    require(!key('K', true), "unknown field scope consumed input");
-    require(store->text.empty(), "unknown field scope changed document");
+    require(key('A'), "unavailable field scope blocked local input");
+    require(store->text == L"あ", "unavailable field scope lost local input");
+    store->replace(L"");
+    pump();
     store->setScope(IS_DEFAULT);
     pump();
 

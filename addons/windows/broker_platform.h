@@ -77,6 +77,7 @@ struct Config {
   uint16_t port = 1178;
   uint32_t inlineCandidates = 4;
   bool ai = true;
+  bool skkservWithoutInputScope = false;
   uint64_t fingerprint = 0;
   static Config load(const std::wstring &home, const std::wstring &broker);
   static void save(const Config &);
