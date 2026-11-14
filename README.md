@@ -13,7 +13,7 @@ AIの応答を待たずに変換できます。
 <sub>geditでの実動作を録画しています。</sub>
 
 Linuxのfcitx5 / IBusに対応しています。
-[Windows版](addons/windows/README.md)も試験提供しています。
+[Windows版](addons/windows/README.md)はまだ検証中で、正常に動作せず使えない場合があります。
 ローカル辞書に候補がない読みは、同梱の[Google IME SKK server](https://github.com/yoshitsugu/google-ime-skkserv-rs)で補います。
 既定で有効です。外部へ読みを送信したくない場合は`SkkservMode=Disabled`で無効にできます。
 
