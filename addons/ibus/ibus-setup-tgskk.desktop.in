@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=tgskk Preferences (IBus)
+Name[ja]=tgskk の設定（IBus）
+Comment=Configure the tgskk input method for IBus
+Exec="@CMAKE_INSTALL_FULL_LIBEXECDIR@/ibus-setup-tgskk"
+Icon=preferences-desktop-keyboard
+Terminal=false
+NoDisplay=true
+Categories=Settings;

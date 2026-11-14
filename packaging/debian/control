@@ -5,7 +5,7 @@ Maintainer: yoshitsugu <yoshitsugu@users.noreply.github.com>
 Build-Depends: debhelper-compat (= 13), cmake (>= 3.20), ninja-build,
  g++, pkg-config, python3 (>= 3.12), cargo (>= 1.88), rustc (>= 1.88),
  libfcitx5core-dev (>= 5.1.7), libibus-1.0-dev (>= 1.5.26), ibus, dbus,
- libxkbcommon-dev, gettext
+ libxkbcommon-dev, libgtk-3-dev, xvfb, xauth, gettext
 Standards-Version: 4.7.0
 Homepage: https://github.com/yoshitsugu/tgskk
 Rules-Requires-Root: no

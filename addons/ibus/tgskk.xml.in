@@ -11,6 +11,7 @@
     <name>tgskk</name><longname>tgskk</longname><language>ja</language>
     <license>GPL-3.0-or-later</license><author>yoshitsugu</author>
     <layout>default</layout><symbol>あ</symbol>
+    <setup>@CMAKE_INSTALL_FULL_LIBEXECDIR@/ibus-setup-tgskk</setup>
     <description>SKK with local context ranking</description>
   </engine></engines>
 </component>

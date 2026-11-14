@@ -97,7 +97,10 @@ case "$kind" in
   deb) dependencies="$(dpkg-deb --field "${ibus[0]}" Depends)" ;;
 esac
 if [[ "$dependencies" == *fcitx* ]]; then echo 'IBus package depends on fcitx' >&2; exit 1; fi
+test -x /usr/libexec/ibus-setup-tgskk
+test -f /usr/share/applications/ibus-setup-tgskk.desktop
 ldd /usr/libexec/ibus-engine-tgskk > /work/ibus-libraries
+if grep -q libgtk /work/ibus-libraries; then echo 'IBus engine links to the settings GUI' >&2; exit 1; fi
 if grep -q libfcitx /work/ibus-libraries; then echo 'IBus engine links to fcitx' >&2; exit 1; fi
 if [[ -f /test-model.gguf ]]; then
   TGSKK_TEST_INSTALLED=1 TGSKK_TEST_MODEL=/test-model.gguf ctest --test-dir build/ibus --output-on-failure --no-tests=error
@@ -120,6 +123,8 @@ response="$(printf 0 | /usr/libexec/tgskk-google-skkserv --stdio --encoding=utf-
 [[ -z "$response" ]]
 remove_packages "$ibus_name"
 test ! -e /usr/libexec/ibus-engine-tgskk
+test ! -e /usr/libexec/ibus-setup-tgskk
+test ! -e /usr/share/applications/ibus-setup-tgskk.desktop
 TGSKK_TEST_INSTALLED=1 ctest --test-dir build/fcitx5 --output-on-failure --no-tests=error
 install_packages "${ibus[@]}"
 remove_packages "$frontend_name"
