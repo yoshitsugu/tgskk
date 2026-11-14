@@ -754,13 +754,6 @@ mod tests {
         let queue = worker.0.queue.clone();
         let (started_tx, started_rx) = mpsc::channel();
         let (continue_tx, continue_rx) = mpsc::channel();
-        let thread = std::thread::spawn(move || {
-            worker_loop(&queue, |key| {
-                started_tx.send(key.reading.clone()).unwrap();
-                continue_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-                Ok(vec![-1.; key.candidates.len()])
-            })
-        });
         let epoch = Arc::new(AtomicU64::new(1));
         let key = |reading: &str, number| Key {
             epoch: number,
@@ -774,6 +767,14 @@ mod tests {
             key: first.clone(),
             epoch: epoch.clone()
         }));
+        // Offer before starting the consumer so try_lock cannot contend at startup.
+        let thread = std::thread::spawn(move || {
+            worker_loop(&queue, |key| {
+                started_tx.send(key.reading.clone()).unwrap();
+                continue_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                Ok(vec![-1.; key.candidates.len()])
+            })
+        });
         assert_eq!(
             started_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
             "キ"
