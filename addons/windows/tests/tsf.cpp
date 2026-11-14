@@ -744,12 +744,15 @@ int run(int argc, char **argv) {
     BYTE clearState[256] = {};
     require(SetKeyboardState(clearState), "restore key state");
   }
-  auto key = [&](UINT code, bool shift = false, bool win = false) {
+  auto key = [&](UINT code, bool shift = false, bool win = false,
+                 bool control = false) {
     BYTE state[256] = {};
     if (shift)
       state[VK_SHIFT] = state[VK_LSHIFT] = 0x80;
     if (win)
       state[VK_LWIN] = 0x80;
+    if (control)
+      state[VK_CONTROL] = state[VK_LCONTROL] = 0x80;
     require(SetKeyboardState(state), "keyboard state");
     BOOL test = FALSE, eaten = FALSE;
     const LPARAM scan = 1 | (MapVirtualKeyW(code, MAPVK_VK_TO_VSC) << 16);
@@ -879,6 +882,19 @@ int run(int argc, char **argv) {
       std::puts("Native TSF surrounding-text AI ranking and commit passed.");
     }
   } else if (mode.empty()) {
+    require(key('L'), "enter ASCII mode");
+    const auto compositionsBeforeAscii = store->startedCompositions;
+    require(!key('A') && !key('A', true) && !key(VK_SPACE),
+            "ASCII keys were consumed");
+    require(store->text.empty() &&
+                store->startedCompositions == compositionsBeforeAscii,
+            "ASCII keys started a composition");
+    store->appInsert(L"aA ");
+    require(key('J', false, false, true), "return from ASCII mode");
+    require(key('A') && store->text == L"aA あ",
+            "kana after ASCII passthrough");
+    store->replace(L"");
+    pump();
     require(key('K', true), "uppercase kana rejected");
     require(key('A'), "kana continuation");
     require(store->text == L"▽か", "wrong preedit");

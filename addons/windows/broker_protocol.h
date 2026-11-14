@@ -9,6 +9,7 @@
 namespace tgskk::windows {
 inline constexpr uint32_t wireMagic = 0x31424754, wireVersion = 1;
 inline constexpr uint64_t keyBudget = 50;
+inline constexpr uint8_t asciiMode = 4;
 enum class Op : uint32_t {
   Hello,
   Key,
@@ -24,7 +25,7 @@ inline uint8_t modeFromLabel(const char *label) {
   return value == "ア"   ? 1
          : value == "ｱ"  ? 2
          : value == "Ａ" ? 3
-         : value == "A"  ? 4
+         : value == "A"  ? asciiMode
                          : 0;
 }
 struct Request {
@@ -66,7 +67,13 @@ inline int eligibilityIndex(uint32_t symbol, uint32_t modifiers) {
                               ((modifiers & TGSKK_MOD_SHIFT) ? 1 : 0));
   return -1;
 }
+inline bool isAsciiPassthrough(uint32_t mode, uint32_t symbol,
+                               uint32_t modifiers) {
+  return mode == asciiMode && eligibilityIndex(symbol, modifiers) == -2;
+}
 inline bool Snapshot::eligible(uint32_t symbol, uint32_t modifiers) const {
+  if (isAsciiPassthrough(mode, symbol, modifiers))
+    return false;
   const int i = eligibilityIndex(symbol, modifiers);
   return i == -2 ||
          (i >= 0 && (eligibility[static_cast<size_t>(i) / 8] & (1 << (i % 8))));

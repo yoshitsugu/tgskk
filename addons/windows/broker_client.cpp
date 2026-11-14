@@ -323,9 +323,15 @@ const TgskkView *Input::reset() {
   return action(Op::Reset);
 }
 bool Input::mayProcess(uint32_t symbol, uint32_t modifiers) {
-  return remote ? remote->current.eligible(symbol, modifiers)
-                : tgskk_session_may_process(local.get(), symbol, modifiers) > 0;
+  if (remote)
+    return remote->current.eligible(symbol, modifiers);
+  const auto *current = tgskk_session_view(local.get());
+  if (current &&
+      isAsciiPassthrough(modeFromLabel(current->mode_label), symbol, modifiers))
+    return false;
+  return tgskk_session_may_process(local.get(), symbol, modifiers) > 0;
 }
+
 const char *Input::candidate(size_t index, bool annotation) {
   if (!remote)
     return annotation ? tgskk_candidate_annotation(local.get(), index)

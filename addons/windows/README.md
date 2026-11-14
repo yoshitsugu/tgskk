@@ -22,8 +22,8 @@ processed it. Local fallback has no persistent learning, AI or server access.
 Elevated applications, AppContainer applications, secure desktop, UI-less mode,
 32-bit applications and ARM64 are outside this build's supported scope. Mouse
 candidate selection and Windows language-bar controls are not implemented.
-ASCII mode commits each printable key through a short TSF composition;
-application completion and undo behavior may differ from ordinary keyboard input.
+ASCII mode passes ordinary printable keys directly to the application.
+Mode-switch commands still go through the input engine.
 Unavailable optional InputScope metadata permits local dictionary input and local AI.
 Password/PIN/private scopes, malformed descriptors and operational query
 failures disable input.

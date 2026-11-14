@@ -538,9 +538,46 @@ void serverCases(const std::wstring &program, const std::wstring &dictionary) {
   std::puts("delayed custom UTF-8/EUC-JP, zero network on local hits/opt-out, "
             "cached misses and forced registration passed");
 }
+void asciiPassthrough(Input &input) {
+  require(input.key('l', 0) && std::string(input.view()->mode_label) == "A",
+          "enter ASCII mode");
+  for (uint32_t symbol = 0x20; symbol <= 0x7e; ++symbol) {
+    require(!input.mayProcess(symbol, 0), "ASCII key was eligible");
+    require(!input.mayProcess(symbol, TGSKK_MOD_SHIFT),
+            "shifted ASCII key was eligible");
+  }
+  require(input.mayProcess('j', TGSKK_MOD_CONTROL),
+          "ASCII mode switch rejected");
+  require(input.key('j', TGSKK_MOD_CONTROL) &&
+              std::string(input.view()->mode_label) == "あ",
+          "leave ASCII mode");
+  require(input.key('L', TGSKK_MOD_SHIFT) &&
+              std::string(input.view()->mode_label) == "Ａ",
+          "enter full-width mode");
+  require(input.mayProcess('a', 0), "full-width key passed through");
+  require(input.key('a', 0) && std::string(input.view()->committed) == "ａ",
+          "full-width conversion lost");
+  input.key('j', TGSKK_MOD_CONTROL);
+  input.key('/', 0);
+  require(input.mayProcess('a', 0), "abbrev key passed through");
+  input.reset();
+}
 void adapterCases(const std::wstring &program, const std::wstring &dictionary) {
   Directory directory;
   Broker broker(directory.path, program, dictionary);
+  {
+    auto localConfig = broker.config;
+    localConfig.home = directory.path / L"local-only";
+    localConfig.broker = directory.path / L"missing-broker.exe";
+    std::atomic<long> localCallbacks = 0;
+    {
+      Input local(localConfig, nullptr, &localCallbacks);
+      asciiPassthrough(local);
+      require(!local.broker(), "local ASCII test adopted a broker");
+    }
+    waitUntil([&] { return localCallbacks == 0; },
+              "local ASCII connector did not stop");
+  }
   auto ready = broker.connect();
   ready.reset();
   Handle blocker;
@@ -565,6 +602,8 @@ void adapterCases(const std::wstring &program, const std::wstring &dictionary) {
     input.key('q', 0);
     require(input.broker() && std::string(input.view()->mode_label) == "ア",
             "remote mode switch");
+    asciiPassthrough(input);
+    input.key('q', 0);
     broker.stop();
     require(input.key('a', 0) == nullptr && input.takeTransportFailure(),
             "transport failure not reported");
