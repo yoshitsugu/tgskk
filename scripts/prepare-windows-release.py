@@ -20,7 +20,7 @@ def verify(directory, tag, revision):
         raise ValueError('missing regular SHA256SUMS file')
     entries = {}
     for line in manifest.read_text(encoding='utf-8').splitlines():
-        match = re.fullmatch(r'([0-9a-f]{64})  (?:\./)?([A-Za-z0-9_.-]+)', line)
+        match = re.fullmatch(r'([0-9a-f]{64}) [ *](?:\./)?([A-Za-z0-9_.-]+)', line)
         if not match or match[2] in entries:
             raise ValueError('malformed or duplicate checksum entry')
         entries[match[2]] = match[1]

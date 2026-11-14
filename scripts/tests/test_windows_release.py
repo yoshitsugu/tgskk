@@ -33,10 +33,12 @@ class WindowsRelease(unittest.TestCase):
         return release.verify(self.root, TAG, REVISION)
 
     def test_accepts_complete_bundle_and_shell_checksum_paths(self):
-        self.assertEqual(self.verify(), '0.1.0')
         manifest = self.root / 'SHA256SUMS'
-        manifest.write_text(manifest.read_text().replace('  ./', '  '))
-        self.assertEqual(self.verify(), '0.1.0')
+        original = manifest.read_text()
+        for separator in ('  ./', '  ', ' *./', ' *'):
+            with self.subTest(separator=separator):
+                manifest.write_text(original.replace('  ./', separator))
+                self.assertEqual(self.verify(), '0.1.0')
 
     def test_rejects_mismatched_tag_revision_and_version(self):
         for tag, revision in [('v0.1.0', REVISION), (TAG, 'b' * 40),
