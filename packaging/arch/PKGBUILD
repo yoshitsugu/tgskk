@@ -8,7 +8,7 @@ pkgdesc='SKK input method with local AI ranking and Google fallback'
 arch=('x86_64')
 url='https://github.com/yoshitsugu/tgskk'
 license=('GPL-3.0-or-later')
-makedepends=('git' 'rust>=1.88' 'cargo>=1.88' 'cmake' 'ninja' 'pkgconf' 'fcitx5>=5.1.7' 'ibus>=1.5.26' 'dbus' 'python>=3.12' 'skk-jisyo')
+makedepends=('git' 'rust>=1.88' 'cargo>=1.88' 'cmake' 'ninja' 'pkgconf' 'fcitx5>=5.1.7' 'ibus>=1.5.26' 'dbus' 'python>=3.12' 'skk-jisyo' 'gtk3' 'xorg-server-xvfb' 'xorg-xauth')
 # Mixed Rust/C archives cannot use makepkg's GCC LTO; Cargo manages Rust LTO.
 options=('!debug' '!lto')
 source=('tgskk::git+https://github.com/yoshitsugu/tgskk.git')
@@ -52,7 +52,7 @@ package_tgskk-git() {
 }
 package_tgskk-ibus-git() {
   pkgdesc='SKK input method for IBus with local context ranking'
-  depends=('ibus>=1.5.26' 'libxkbcommon' "tgskk-common-git=$pkgver-$pkgrel")
+  depends=('ibus>=1.5.26' 'gtk3' 'libxkbcommon' "tgskk-common-git=$pkgver-$pkgrel")
   provides=('tgskk-ibus')
   conflicts=('tgskk-ibus')
   cd "$srcdir/tgskk" || return

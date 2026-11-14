@@ -13,8 +13,8 @@ fcitx5版を導入する必要はありません。
 
 ## ソースからビルドして導入
 
-Rust 1.88以降、C++20、CMake、Ninja、pkg-config、libxkbcommon、IBus 1.5.26以降とGLibの開発ファイル、D-Busが必要です。
-Debian/Ubuntuの開発パッケージは`libibus-1.0-dev libxkbcommon-dev libglib2.0-dev dbus`、Archは`ibus libxkbcommon glib2 dbus`です。
+Rust 1.88以降、C++20、CMake、Ninja、pkg-config、libxkbcommon、IBus 1.5.26以降、GLibとGTK 3の開発ファイル、D-Bus、Xvfbが必要です。
+Debian/Ubuntuの開発パッケージは`libibus-1.0-dev libxkbcommon-dev libglib2.0-dev libgtk-3-dev dbus xvfb xauth`、Archは`ibus libxkbcommon glib2 gtk3 dbus xorg-server-xvfb xorg-xauth`です。
 SKK辞書（`skkdic`または`skk-jisyo`）も用意してください。
 
 ```sh
@@ -40,7 +40,14 @@ fcitx5とIBusを同じ入力欄で同時に使用しないでください。
 
 ## 設定
 
-`~/.config/tgskk/ibus.conf`に次の形式で設定します。
+GNOMEの「設定」→「キーボード」→「入力ソース」でtgskkの設定を開けます。
+`ibus-setup`でtgskkを選んで「設定」を押すこともできます。
+辞書、AI、SKKサーバー、候補一覧を出すまでの候補数を変更できます。
+保存しても入力中のエンジンは再起動しません。
+入力を確定してから`ibus restart`を実行するか、ログインし直してください。
+Fcitx5版は「Fcitx 5 設定」のtgskkの設定ボタンから変更できます。
+
+直接編集する場合は`~/.config/tgskk/ibus.conf`に次の形式で設定します。
 変更はIBusの再起動後に反映します。
 `XDG_CONFIG_HOME`、`XDG_DATA_HOME`による保存先の変更にも対応します。
 

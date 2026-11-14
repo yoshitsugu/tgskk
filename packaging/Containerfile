@@ -5,12 +5,12 @@ RUN if command -v apt-get >/dev/null; then \
       export DEBIAN_FRONTEND=noninteractive; \
       apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config python3 git ca-certificates \
-        libfcitx5core-dev fcitx5 fcitx5-modules libxkbcommon-dev gettext libibus-1.0-dev ibus dbus \
+        libfcitx5core-dev fcitx5 fcitx5-modules libxkbcommon-dev gettext libibus-1.0-dev libgtk-3-dev ibus dbus xvfb xauth \
         debhelper devscripts fakeroot skkdic && \
       rm -rf /var/lib/apt/lists/*; \
     else \
       pacman -Syu --noconfirm --needed base-devel cmake ninja pkgconf python git \
-        ca-certificates fcitx5 libxkbcommon skk-jisyo namcap ibus dbus; \
+        ca-certificates fcitx5 libxkbcommon skk-jisyo namcap ibus dbus gtk3 xorg-server-xvfb xorg-xauth; \
     fi
 COPY --from=rust /usr/local/cargo /usr/local/cargo
 COPY --from=rust /usr/local/rustup /usr/local/rustup
