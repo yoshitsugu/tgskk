@@ -2,7 +2,7 @@
 
 An experimental x64 TSF frontend for ordinary desktop applications.
 It uses the same Rust/CSKK input engine as the Linux frontends.
-Installer and ZIP development builds are available from the Windows workflow.
+Installer and ZIP development builds are available from [GitHub Releases](https://github.com/yoshitsugu/tgskk/releases) as Windows previews.
 They are unsigned; interactive application compatibility is still being tested.
 
 The frontend supports kana input, okurigana, dictionary conversion, word entry,
@@ -31,8 +31,11 @@ never surrounding text.
 
 ## Install
 
-Download `windows-x64-distribution` from a successful Windows Actions run and
-extract it. Run `tgskk-*-windows-x64-setup.exe` with administrator permission.
+Open a **Windows preview** in [GitHub Releases](https://github.com/yoshitsugu/tgskk/releases)
+and download only `tgskk-*-windows-x64-setup.exe` and `SHA256SUMS`.
+A GitHub account is not required. Source archives and the manual-registration ZIP
+are separate downloads and are not needed for ordinary installation.
+Run the installer with administrator permission.
 It installs the x64 frontend, broker, settings app, large dictionary, verified
 AI model, Google helper and app-local Microsoft C++ runtime under Program Files.
 Add Japanese in Windows language settings if needed, then select tgskk as its
@@ -198,3 +201,17 @@ from a test failure (1) or full release (0).
 
 Automated TSF tests do not establish compatibility with individual applications.
 Interactive Windows 11 application testing is required before regular use.
+
+## Publish a Windows preview
+
+Push a tag named `windows-preview-vVERSION-COMMIT`, where VERSION matches the
+workspace version and COMMIT is the first 12 characters of the tagged commit ID.
+The Windows workflow rebuilds and tests the binaries and installer, runs the
+quality and performance checks, verifies every release checksum, then publishes
+a prerelease with separate installer, ZIP and complete source downloads.
+The release stays a draft until all files have been uploaded. Existing releases
+and the stable latest release are not replaced.
+
+For branch/PR builds, `windows-x64-installer` is the smaller Actions artifact
+containing only the installer and checksums. `windows-x64-distribution` also
+contains the ZIP and sources.

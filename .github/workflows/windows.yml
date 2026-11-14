@@ -29,6 +29,8 @@ jobs:
           Import-Module PSScriptAnalyzer -RequiredVersion 1.25.0
           $issues = @(Invoke-ScriptAnalyzer -Path scripts/test-windows-installer.ps1 -IncludeRule PSAvoidAssignmentToAutomaticVariable)
           if ($issues.Count) { throw ($issues | Out-String) }
+      - name: Check Windows release verification
+        run: python -m unittest discover -s scripts/tests -p test_windows_release.py
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal
       - name: Prepare verified worker sources and model
@@ -125,6 +127,14 @@ jobs:
             build/windows-package/*.zip
             build/windows-package/*-setup.exe
             build/windows-package/*.tar.gz
+            build/windows-package/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-x64-installer
+          path: |
+            build/windows-package/*-setup.exe
             build/windows-package/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
@@ -248,3 +258,38 @@ jobs:
           name: windows-desktop-broker-logs
           path: build/windows/*.log
           if-no-files-found: ignore
+  release-quality:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+    uses: ./.github/workflows/rust-quality.yml
+    with:
+      baseline-ref: HEAD^
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+    needs: [worker, desktop, release-quality]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v6
+        with:
+          name: windows-x64-distribution
+          path: build/windows-release
+      - name: Verify standalone release files
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/prepare-windows-release.py --tag "$TAG" --revision "$GITHUB_SHA"
+      - name: Publish Windows preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" build/windows-release/*-setup.exe build/windows-release/*.zip \
+            build/windows-release/*.tar.gz build/windows-release/SHA256SUMS \
+            --verify-tag --draft --prerelease --latest=false \
+            --title "Windows preview ($TAG)" --notes-file build/windows-release-notes.md
+          gh release edit "$TAG" --draft=false --prerelease --latest=false
