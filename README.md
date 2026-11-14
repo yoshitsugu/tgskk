@@ -27,6 +27,8 @@ IBus版のソースビルドは[IBusガイド](docs/ibus.md)に記載してい�
 
 ## 開発
 
+静的検査とテストを実行し、fcitx5版をビルドしてテストします。
+
 ```sh
 bash scripts/check.sh
 bash scripts/check-fcitx5.sh
