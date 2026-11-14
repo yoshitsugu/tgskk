@@ -7,6 +7,7 @@
 #include "tsf_compat.h"
 #include <algorithm>
 #include <atomic>
+#include <commctrl.h>
 #include <cstdio>
 #include <filesystem>
 #include <inputscope.h>
@@ -555,6 +556,26 @@ class Service final : public ITfTextInputProcessorEx,
     release(openCompartment);
     release(conversionCompartment);
   }
+  void refreshSettings() try {
+    if (!session || composition || editing || deactivating)
+      return;
+    session->refresh();
+    inlineCandidates = session->settings().inlineCandidates;
+    skkservWithoutInputScope = session->settings().skkservWithoutInputScope;
+  } catch (const std::bad_alloc &) {
+    reportFailure("reload input settings", E_OUTOFMEMORY);
+  } catch (...) {
+    reportFailure("reload input settings", E_FAIL);
+  }
+  static LRESULT CALLBACK settingsWindow(HWND hwnd, UINT message,
+                                         WPARAM argument, LPARAM data, UINT_PTR,
+                                         DWORD_PTR owner) {
+    if (message == WM_TIMER && argument == 1) {
+      reinterpret_cast<Service *>(owner)->refreshSettings();
+      return 0;
+    }
+    return DefSubclassProc(hwnd, message, argument, data);
+  }
   bool eligible(uint32_t symbol, uint32_t modifiers) const {
     return composition || (session && session->mayProcess(symbol, modifiers));
   }
@@ -821,6 +842,11 @@ public:
         Deactivate();
         return FAILED(error) ? error : E_FAIL;
       }
+      if (!SetWindowSubclass(candidates, settingsWindow, 1,
+                             reinterpret_cast<DWORD_PTR>(this)) ||
+          !SetTimer(candidates, 1, 500, nullptr))
+        reportFailure("watch input settings",
+                      HRESULT_FROM_WIN32(GetLastError()));
       result = initControls();
       if (FAILED(result)) {
         Deactivate();
@@ -845,6 +871,10 @@ public:
       ~ResetDeactivation() { value = false; }
     } guard{deactivating};
     traceCount("deactivate entered", refs.load(), "references");
+    if (candidates) {
+      KillTimer(candidates, 1);
+      RemoveWindowSubclass(candidates, settingsWindow, 1);
+    }
     bool ended = abandon();
     uninitControls();
     unwatch();
@@ -895,6 +925,7 @@ public:
     if (!eaten)
       return E_POINTER;
     *eaten = FALSE;
+    refreshSettings();
     if (controlsPending && composition) {
       *eaten = TRUE;
       return S_OK;
@@ -916,6 +947,7 @@ public:
     if (!eaten)
       return E_POINTER;
     *eaten = FALSE;
+    refreshSettings();
     if (controlsPending && FAILED(synchronizeControls())) {
       *eaten = composition != nullptr;
       return S_OK;

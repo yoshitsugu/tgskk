@@ -8,7 +8,8 @@
 
 namespace tgskk::windows {
 inline constexpr uint32_t wireMagic = 0x31424754, wireVersion = 1;
-inline constexpr uint64_t keyBudget = 50;
+inline constexpr uint64_t keyBudget = 50, helloBudget = 3000;
+inline constexpr uint32_t reloadDeferred = 32;
 inline constexpr uint8_t asciiMode = 4;
 enum class Op : uint32_t {
   Hello,
@@ -208,7 +209,8 @@ inline std::vector<uint8_t> encode(const Snapshot &s) {
   }
   return std::move(w.data);
 }
-inline Snapshot snapshot(const std::vector<uint8_t> &bytes) {
+inline Snapshot snapshot(const std::vector<uint8_t> &bytes,
+                         uint32_t inlineCandidates = 4) {
   Reader r(bytes);
   r.header();
   Snapshot s;
@@ -242,13 +244,17 @@ inline Snapshot snapshot(const std::vector<uint8_t> &bytes) {
   for (uint32_t i = 0; i < count; ++i)
     s.candidates.push_back({r.string(), r.string()});
   r.end();
-  if (!s.epoch || (s.flags & ~31U) || s.mode > 4 || s.ai > 3 ||
+  if (!s.epoch || (s.flags & ~63U) || s.mode > 4 || s.ai > 3 ||
       s.persistence > 3 || s.count > 1000000 ||
       (s.count && s.selected >= s.count) || s.start > s.count ||
       count != std::min<uint32_t>(7, s.count - s.start) ||
       ((s.flags & 4) &&
-       (!s.count || s.start != tgskk::candidatePageStart(s.selected, 4))))
+       (!s.count ||
+        s.start != tgskk::candidatePageStart(s.selected, inlineCandidates))))
     throw std::runtime_error("Invalid broker view");
+  if ((s.flags & reloadDeferred) &&
+      (!s.failed || s.count || !s.preedit.empty() || !s.committed.empty()))
+    throw std::runtime_error("Invalid deferred broker request");
   return s;
 }
 } // namespace tgskk::windows

@@ -69,7 +69,8 @@ encoding, AI and model settings, Google/custom SKK servers, and the number of
 candidates shown before the list (0–64, default 4).
 Saving validates the complete configuration and replaces it atomically;
 invalid values or write errors preserve the previous file and user dictionary.
-Sign out and back in to apply changes to all input applications and the broker.
+Saved settings are picked up automatically when input resumes.
+Pending composition keeps its settings until it is committed or cancelled.
 
 ## Build
 

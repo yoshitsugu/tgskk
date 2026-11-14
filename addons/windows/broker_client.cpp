@@ -5,8 +5,10 @@
 #include <utility>
 
 namespace tgskk::windows {
-Connection::Connection(Channel value, uint64_t valueFingerprint)
-    : channel(std::move(value)), fingerprint(valueFingerprint) {}
+Connection::Connection(Channel value, uint64_t valueFingerprint,
+                       uint32_t inlineCount)
+    : channel(std::move(value)), fingerprint(valueFingerprint),
+      inlineCandidates(inlineCount) {}
 std::unique_ptr<Connection> Connection::connect(const Config &config) {
   const auto identity = Identity::current();
   const auto name = endpoint(identity, config.home, config.broker);
@@ -36,9 +38,9 @@ std::unique_ptr<Connection> Connection::connect(const Config &config) {
   if (!handle)
     return nullptr;
   verifyPeer(handle.value, false, identity, config.broker);
-  auto connection = std::make_unique<Connection>(Channel(std::move(handle)),
-                                                 config.fingerprint);
-  connection->perform(Op::Hello, 0, 0, 0, {}, 100);
+  auto connection = std::make_unique<Connection>(
+      Channel(std::move(handle)), config.fingerprint, config.inlineCandidates);
+  connection->perform(Op::Hello, 0, 0, 0, {}, helloBudget);
   return connection;
 }
 const Snapshot &Connection::perform(Op op, uint32_t argument,
@@ -64,10 +66,12 @@ const Snapshot &Connection::perform(Op op, uint32_t argument,
         "Broker request timed out or disconnected (operation " +
         std::to_string(static_cast<uint32_t>(op)) + ", " +
         std::to_string(monotonicMillis() - begin) + " ms)");
-  auto reply = snapshot(body);
+  auto reply = snapshot(body, inlineCandidates);
   if (reply.sequence != sequence ||
       (current.epoch && current.epoch != reply.epoch))
     throw std::runtime_error("Stale broker response");
+  if (reply.flags & reloadDeferred)
+    throw BrokerReloading();
   if (reply.failed)
     throw std::runtime_error("Broker rejected request: " + reply.error);
   current = std::move(reply);
@@ -82,6 +86,7 @@ struct ConnectJob {
   std::shared_ptr<Connecting> state;
   HMODULE module;
   std::atomic<long> *objects;
+  bool refresh;
 };
 void CALLBACK connectThread(PTP_CALLBACK_INSTANCE instance, void *argument) {
   CallbackMayRunLong(instance);
@@ -92,28 +97,37 @@ void CALLBACK connectThread(PTP_CALLBACK_INSTANCE instance, void *argument) {
     module = job->module;
     objects = job->objects;
     try {
-      bool launched = false;
-      const auto deadline = monotonicMillis() + 3000;
-      while (!job->state->stopped && monotonicMillis() < deadline) {
-        auto connection = Connection::connect(job->config);
-        if (connection) {
+      [&] {
+        auto latest = Config::load(job->config.home, job->config.broker);
+        job->state->config = latest;
+        job->state->configLoaded = true;
+        if (job->refresh && latest.fingerprint == job->config.fingerprint)
+          return;
+        job->config = std::move(latest);
+        bool launched = false;
+        const auto deadline = monotonicMillis() + 3000;
+        while (!job->state->stopped && monotonicMillis() < deadline) {
+          auto connection = Connection::connect(job->config);
+          if (connection) {
+            std::lock_guard lock(job->state->mutex);
+            if (!job->state->stopped)
+              job->state->ready = std::move(connection);
+            break;
+          }
+          if (!launched) {
+            launchBroker(job->config);
+            launched = true;
+          }
+          Sleep(25);
+        }
+        if (!job->state->stopped) {
           std::lock_guard lock(job->state->mutex);
-          if (!job->state->stopped)
-            job->state->ready = std::move(connection);
-          break;
+          if (!job->state->ready)
+            job->state->error =
+                "Broker connection unavailable; local dictionary "
+                "input remains active";
         }
-        if (!launched) {
-          launchBroker(job->config);
-          launched = true;
-        }
-        Sleep(25);
-      }
-      if (!job->state->stopped) {
-        std::lock_guard lock(job->state->mutex);
-        if (!job->state->ready)
-          job->state->error = "Broker connection unavailable; local dictionary "
-                              "input remains active";
-      }
+      }();
     } catch (const std::exception &error) {
       std::lock_guard lock(job->state->mutex);
       job->state->error = error.what();
@@ -132,7 +146,8 @@ void CALLBACK connectThread(PTP_CALLBACK_INSTANCE instance, void *argument) {
 }
 } // namespace
 std::shared_ptr<Connecting> connectAsync(const Config &config, HMODULE module,
-                                         std::atomic<long> *objects) {
+                                         std::atomic<long> *objects,
+                                         bool refresh) {
   if (connectors.fetch_add(1) >= 4) {
     --connectors;
     return {};
@@ -150,7 +165,7 @@ std::shared_ptr<Connecting> connectAsync(const Config &config, HMODULE module,
   try {
     auto state = std::make_shared<Connecting>();
     auto job = std::make_unique<ConnectJob>(
-        ConnectJob{config, state, pinned, objects});
+        ConnectJob{config, state, pinned, objects, refresh});
     if (objects)
       ++*objects;
     if (!TrySubmitThreadpoolCallback(connectThread, job.get(), nullptr)) {
@@ -171,7 +186,8 @@ std::shared_ptr<Connecting> connectAsync(const Config &config, HMODULE module,
   }
 }
 Input::Input(const Config &settings, HMODULE dll, std::atomic<long> *counter)
-    : config(settings), module(dll), objects(counter) {
+    : config(settings), localDictionary(settings.dictionary),
+      localEncoding(settings.encoding), module(dll), objects(counter) {
   char *error = nullptr;
   runtime.reset(tgskk_runtime_new(utf8(config.dictionary).c_str(),
                                   config.encoding.c_str(), nullptr, &error));
@@ -227,8 +243,8 @@ void Input::startConnecting() {
         "Broker connector is busy; local dictionary input remains active";
 }
 void Input::adopt() {
-  if (remote || !tgskk_session_view(local.get()) ||
-      *tgskk_session_view(local.get())->preedit)
+  const auto *current = view();
+  if (!current || *current->preedit)
     return;
   if (connecting) {
     std::unique_lock lock(connecting->mutex, std::try_to_lock);
@@ -242,11 +258,12 @@ void Input::adopt() {
     const bool finished = connecting->finished.load(std::memory_order_acquire);
     lock.unlock();
     if (ready) {
-      const auto localMode =
-          modeFromLabel(tgskk_session_view(local.get())->mode_label);
+      const auto localMode = modeFromLabel(current->mode_label);
       try {
         if (ready->current.mode != localMode)
           ready->perform(Op::Mode, localMode);
+        auto nextConfig = connecting->config;
+        config = std::move(nextConfig);
         remote = std::move(ready);
         connecting->stopped = true;
         connecting.reset();
@@ -260,7 +277,28 @@ void Input::adopt() {
       }
     } else if (!finished)
       return;
+    else {
+      if (!remote && connecting->configLoaded &&
+          connecting->config.fingerprint != config.fingerprint &&
+          (connecting->config.fingerprint != rejectedConfig ||
+           monotonicMillis() >= configRetryAt)) {
+        auto previous = config;
+        try {
+          config = connecting->config;
+          updateFallback(modeFromLabel(current->mode_label));
+          retryDelay = 1000;
+        } catch (const std::exception &error) {
+          config = std::move(previous);
+          rejectedConfig = connecting->config.fingerprint;
+          configRetryAt = monotonicMillis() + 30000;
+          diagnostic = error.what();
+        }
+      }
+      connecting.reset();
+    }
   }
+  if (remote)
+    return;
   const auto now = monotonicMillis();
   if (!retryAt)
     retryAt = now + retryDelay;
@@ -269,6 +307,42 @@ void Input::adopt() {
   startConnecting();
   retryDelay = std::min<uint64_t>(30000, retryDelay * 2);
 }
+void Input::refresh() {
+  adopt();
+  const auto *current = view();
+  const auto now = monotonicMillis();
+  if (!current || *current->preedit || connecting || now < refreshAt)
+    return;
+  refreshAt = now + 1000;
+  connecting = connectAsync(config, module, objects, true);
+}
+void Input::updateFallback(uint8_t mode) {
+  if (config.dictionary != localDictionary ||
+      config.encoding != localEncoding) {
+    auto nextDictionary = config.dictionary;
+    auto nextEncoding = config.encoding;
+    char *error = nullptr;
+    std::unique_ptr<TgskkRuntime, decltype(&tgskk_runtime_free)> nextRuntime(
+        tgskk_runtime_new(utf8(config.dictionary).c_str(),
+                          config.encoding.c_str(), nullptr, &error),
+        tgskk_runtime_free);
+    std::string message = error ? error : "Cannot reload fallback dictionary";
+    tgskk_string_free(error);
+    if (!nextRuntime)
+      throw std::runtime_error(message);
+    error = nullptr;
+    std::unique_ptr<TgskkSession, decltype(&tgskk_session_free)> nextInput(
+        tgskk_session_new(nextRuntime.get(), &error), tgskk_session_free);
+    message = error ? error : "Cannot reload fallback session";
+    tgskk_string_free(error);
+    if (!nextInput || !tgskk_session_set_mode(nextInput.get(), mode))
+      throw std::runtime_error(message);
+    local = std::move(nextInput);
+    runtime = std::move(nextRuntime);
+    localDictionary = std::move(nextDictionary);
+    localEncoding = std::move(nextEncoding);
+  }
+}
 void Input::fail(const std::string &message) {
   const auto oldMode =
       remote ? remote->current.mode
@@ -276,18 +350,31 @@ void Input::fail(const std::string &message) {
   diagnostic = message;
   transportFailed = true;
   remote.reset();
+  try {
+    updateFallback(static_cast<uint8_t>(oldMode));
+  } catch (const std::exception &error) {
+    diagnostic += "; " + std::string(error.what());
+  }
   tgskk_session_set_mode(local.get(), static_cast<uint8_t>(oldMode));
   retryDelay = 1000;
   startConnecting();
 }
 const TgskkView *Input::action(Op op, uint32_t argument, uint32_t modifiers) {
-  if (op == Op::Key)
+  // Context permissions were computed against the current configuration.
+  if (op == Op::Key && !permissions)
     adopt();
   if (remote) {
     try {
       remote->perform(op, argument, modifiers, op == Op::Key ? permissions : 0,
                       op == Op::Key ? left : "");
       return remoteView();
+    } catch (const BrokerReloading &error) {
+      const bool idle = remote->current.preedit.empty();
+      fail(error.what());
+      if (!idle || op == Op::Choose || op == Op::Select)
+        return nullptr;
+      // The broker explicitly guarantees that this request was not executed.
+      transportFailed = false;
     } catch (const std::exception &error) {
       fail(error.what());
       return nullptr;

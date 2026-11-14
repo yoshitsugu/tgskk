@@ -608,6 +608,12 @@ void adapterCases(const std::wstring &program, const std::wstring &dictionary) {
     require(!input.broker() && std::string(input.view()->preedit) == "▽か",
             "adopt replaced local composition");
     input.reset();
+    input.context("", false, false);
+    require(
+        input.key('a', 0) && !input.broker() &&
+            std::string(input.view()->committed) == "あ",
+        "adoption changed settings after context permissions were computed");
+    input.reset();
     input.key('q', 0);
     require(input.broker() && std::string(input.view()->mode_label) == "ア",
             "remote mode switch");
@@ -624,6 +630,187 @@ void adapterCases(const std::wstring &program, const std::wstring &dictionary) {
   waitUntil([&] { return callbacks == 0; }, "connector outlived adapter");
   std::puts("deferred adoption, mode preservation, broker death and local "
             "fallback passed");
+}
+
+void reloadCases(const std::wstring &program, const std::wstring &dictionary) {
+  Directory directory;
+  const auto testProgram = (directory.path / L"tgskk-broker.exe").wstring();
+  std::filesystem::copy_file(program, testProgram);
+  for (const auto &entry : std::filesystem::directory_iterator(
+           std::filesystem::path(program).parent_path())) {
+    if (entry.path().extension() == L".dll")
+      std::filesystem::copy_file(entry.path(),
+                                 directory.path / entry.path().filename());
+  }
+  Broker broker(directory.path, testProgram, dictionary);
+  auto ready = broker.connect();
+  ready.reset();
+  std::atomic<long> callbacks = 0;
+  {
+    Input composing(broker.config, nullptr, &callbacks);
+    Input idle(broker.config, nullptr, &callbacks);
+    waitUntil(
+        [&] {
+          composing.refresh();
+          idle.refresh();
+          return composing.broker() && idle.broker();
+        },
+        "initial settings connections");
+    require(composing.key('K', TGSKK_MOD_SHIFT) && composing.key('a', 0),
+            "start composition before settings save");
+    auto changed = broker.config;
+    changed.inlineCandidates = 0;
+    changed.skkservWithoutInputScope = true;
+    Config::save(changed);
+    changed = Config::load(changed.home, changed.broker);
+    waitUntil(
+        [&] {
+          composing.refresh();
+          idle.refresh();
+          return idle.settings().fingerprint == changed.fingerprint;
+        },
+        "idle app did not adopt saved settings");
+    require(composing.settings().fingerprint == broker.config.fingerprint &&
+                std::string(composing.view()->preedit) == "▽か",
+            "settings reload replaced another application's composition");
+    require(idle.settings().inlineCandidates == 0 &&
+                idle.settings().skkservWithoutInputScope,
+            "settings reload did not update input policy");
+    composing.key('n', 0);
+    require(std::string(composing.view()->preedit) == "▽かn",
+            "old broker session stopped working after reload");
+    composing.reset();
+    composing.setMode(1);
+    waitUntil(
+        [&] {
+          composing.refresh();
+          return composing.settings().fingerprint == changed.fingerprint;
+        },
+        "completed input did not adopt settings");
+    require(std::string(composing.view()->mode_label) == "ア",
+            "settings reload lost input mode");
+    auto invalid = changed;
+    invalid.dictionary = directory.path / L"missing-dictionary";
+    Config::save(invalid);
+    bool reported = false;
+    waitUntil(
+        [&] {
+          idle.refresh();
+          reported = !idle.takeDiagnostic().empty() || reported;
+          return reported;
+        },
+        "invalid settings reload did not report failure");
+    require(idle.settings().fingerprint == changed.fingerprint &&
+                idle.key('a', 0) && std::string(idle.view()->committed) == "あ",
+            "invalid reload discarded working settings");
+    write(directory.path / L"replacement.utf8",
+          ";; okuri-ari entries.\n;; okuri-nasi entries.\n"
+          "か "
+          "/代替/候補01/候補02/候補03/候補04/候補05/候補06/候補07/候補08/"
+          "候補09/候補10/候補11/\n");
+    require(composing.key('K', TGSKK_MOD_SHIFT) && composing.key('a', 0),
+            "start composition before base dictionary change");
+    const auto pending = std::string(composing.view()->preedit);
+    changed.dictionary = directory.path / L"replacement.utf8";
+    Config::save(changed);
+    changed = Config::load(changed.home, changed.broker);
+    bool deferred = false;
+    waitUntil(
+        [&] {
+          try {
+            (void)Connection::connect(changed);
+          } catch (const std::exception &error) {
+            deferred = std::string(error.what()).find("pending input") !=
+                       std::string::npos;
+          }
+          return deferred;
+        },
+        "base dictionary reload was not deferred for pending input");
+    require(idle.settings().fingerprint != changed.fingerprint &&
+                std::string(composing.view()->preedit) == pending,
+            "base dictionary reload replaced pending input or adopted early");
+    composing.reset();
+    waitUntil(
+        [&] {
+          idle.refresh();
+          return idle.settings().fingerprint == changed.fingerprint;
+        },
+        "replacement dictionary was not adopted");
+    require(idle.key('K', TGSKK_MOD_SHIFT) && idle.key('a', 0) &&
+                idle.key(' ', 0) &&
+                std::string(idle.view()->preedit) == "▼代替",
+            "new dictionary was not used");
+    require(idle.choose(7) && idle.view()->selected == 7 && idle.choose(0) &&
+                idle.view()->selected == 0,
+            "live inline count rejected candidate page navigation");
+    require(idle.key(TGSKK_KEY_RETURN, 0), "commit with new settings");
+    composing.key('K', TGSKK_MOD_SHIFT);
+    composing.key('a', 0);
+    composing.key(' ', 0);
+    require(composing.settings().fingerprint != changed.fingerprint &&
+                std::string(composing.view()->preedit) == "▼代替",
+            "new dictionary's learning was not shared with old settings");
+    composing.reset();
+    composing.setMode(0);
+    for (const auto symbol : {'K', 'a', 'n', 'j', 'i', ' '})
+      require(composing.key(symbol, symbol == 'K' ? TGSKK_MOD_SHIFT : 0),
+              "old generation conversion after dictionary reload");
+    require(composing.select(1), "old generation learning");
+    broker.config = changed;
+    auto observer = broker.connect();
+    flush(*observer);
+    const auto learned = read(broker.config.userDictionary);
+    require(learned.find("代替") != std::string::npos &&
+                learned.find("感じ") != std::string::npos,
+            "saving discarded learning from one settings generation");
+    observer.reset();
+    broker.stop();
+    std::filesystem::remove(testProgram);
+    require(!idle.key('a', 0) && idle.takeTransportFailure(),
+            "reloaded broker failure was not reported");
+    require(idle.key('K', TGSKK_MOD_SHIFT) && idle.key('a', 0) &&
+                idle.key(' ', 0) &&
+                std::string(idle.view()->preedit) == "▼代替",
+            "local fallback retained the previous dictionary");
+  }
+  waitUntil([&] { return callbacks == 0; }, "reload connector outlived input");
+  std::puts("Live settings, deferred adoption, invalid rollback and shared "
+            "learning passed");
+}
+
+void localSettingsReload(const std::wstring &dictionary) {
+  Directory directory;
+  const auto program = (directory.path / L"missing-broker.exe").wstring();
+  write(directory.path / L"windows.ini",
+        "Dictionary=" + utf8(dictionary) +
+            "\nEncoding=utf-8\nAI=false\nSkkserv=Disabled\n");
+  auto config = Config::load(directory.path.wstring(), program);
+  std::atomic<long> callbacks = 0;
+  {
+    Input input(config, nullptr, &callbacks);
+    input.setMode(1);
+    write(directory.path / L"local.utf8",
+          ";; okuri-ari entries.\n;; okuri-nasi entries.\nか /ローカル/\n");
+    config.dictionary = directory.path / L"local.utf8";
+    config.inlineCandidates = 0;
+    Config::save(config);
+    config = Config::load(config.home, config.broker);
+    waitUntil(
+        [&] {
+          input.refresh();
+          return input.settings().fingerprint == config.fingerprint;
+        },
+        "local input did not reload settings without a broker");
+    require(!input.broker() && input.settings().inlineCandidates == 0 &&
+                std::string(input.view()->mode_label) == "ア",
+            "local settings reload lost mode or ignored display settings");
+    require(input.key('K', TGSKK_MOD_SHIFT) && input.key('a', 0) &&
+                input.key(' ', 0) &&
+                std::string(input.view()->preedit) == "▼ローカル",
+            "local settings reload retained old dictionary");
+  }
+  waitUntil([&] { return callbacks == 0; },
+            "local settings connector did not stop");
 }
 
 void lateBrokerRecovery(const std::wstring &program,
@@ -842,6 +1029,8 @@ int wmain(int argc, wchar_t **argv) {
       malformedAndIsolation(program, dictionary);
       serverCases(program, dictionary);
       adapterCases(program, dictionary);
+      reloadCases(program, dictionary);
+      localSettingsReload(dictionary);
       lateBrokerRecovery(program, dictionary);
       performance(program, dictionary);
     }

@@ -38,6 +38,11 @@ enum TgskkKey {
  * once. */
 TgskkRuntime *tgskk_runtime_new(const char *dictionary, const char *encoding,
                                 const char *user_dictionary, char **error);
+/* Create a runtime with another base dictionary, sharing the existing user
+ * dictionary and its saver. Both runtimes stay on the same owner thread. */
+TgskkRuntime *tgskk_runtime_with_dictionary(const TgskkRuntime *runtime,
+                                            const char *dictionary,
+                                            const char *encoding, char **error);
 void tgskk_runtime_free(TgskkRuntime *runtime);
 /* Startup only, before creating sessions. Adds a read-only user snapshot in
  * front of the base dictionary when another broker owns the writer lock. */

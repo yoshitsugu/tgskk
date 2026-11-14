@@ -49,6 +49,7 @@ struct TgskkZenz {
 
 struct TgskkRuntime {
     dictionaries: Vec<Arc<CskkDictionary>>,
+    base: Arc<CskkDictionary>,
 }
 
 #[repr(C)]
@@ -331,8 +332,43 @@ unsafe extern "C" fn tgskk_runtime_new(
                 clippy::arc_with_non_send_sync,
                 reason = "CSKK dictionaries stay on the input thread"
             )]
-            dictionaries.push(Arc::new(dictionary));
-            Ok(Box::into_raw(Box::new(TgskkRuntime { dictionaries })))
+            let base = Arc::new(dictionary);
+            dictionaries.push(base.clone());
+            Ok(Box::into_raw(Box::new(TgskkRuntime { dictionaries, base })))
+        })
+        .unwrap_or(ptr::null_mut())
+    }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn tgskk_runtime_with_dictionary(
+    runtime: *const TgskkRuntime,
+    dictionary: *const c_char,
+    encoding: *const c_char,
+    error: *mut *mut c_char,
+) -> *mut TgskkRuntime {
+    unsafe {
+        report(error, || {
+            let runtime = runtime.as_ref().ok_or("Runtime is NULL")?;
+            let encoding = string_arg(encoding)?;
+            if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("euc-jp") {
+                return Err("Dictionary encoding must be utf-8 or euc-jp".to_owned());
+            }
+            let base = CskkDictionary::new_static_dict(string_arg(dictionary)?, encoding, true)
+                .map_err(|e| e.to_string())?;
+            let mut dictionaries: Vec<_> = runtime
+                .dictionaries
+                .iter()
+                .filter(|dictionary| !Arc::ptr_eq(dictionary, &runtime.base))
+                .cloned()
+                .collect();
+            #[allow(
+                clippy::arc_with_non_send_sync,
+                reason = "Dictionaries stay on the owner thread"
+            )]
+            let base = Arc::new(base);
+            dictionaries.push(base.clone());
+            Ok(Box::into_raw(Box::new(TgskkRuntime { dictionaries, base })))
         })
         .unwrap_or(ptr::null_mut())
     }
@@ -575,7 +611,7 @@ mod tests {
     use super::*;
 
     struct Fixture {
-        _directory: tempfile::TempDir,
+        directory: tempfile::TempDir,
         user: CString,
         runtime: *mut TgskkRuntime,
         session: *mut TgskkSession,
@@ -599,7 +635,7 @@ mod tests {
             assert!(!session.is_null());
             assert!(error.is_null());
             Self {
-                _directory: directory,
+                directory,
                 user,
                 runtime,
                 session,
@@ -763,6 +799,58 @@ mod tests {
             tgskk_runtime_free(transient_runtime);
             assert_eq!(message((*keys(retained, "k a")).committed), "か");
             tgskk_session_free(retained);
+        }
+    }
+
+    #[test]
+    fn replacing_base_dictionary_shares_live_learning_and_preserves_old_sessions() {
+        let fixture = Fixture::new();
+        let path = fixture.directory.path().join("replacement.utf8");
+        std::fs::write(
+            &path,
+            ";; okuri-ari entries.\n;; okuri-nasi entries.\nかんじ /新候補/\n",
+        )
+        .unwrap();
+        let path = CString::new(path.to_str().unwrap()).unwrap();
+        unsafe {
+            let replacement = tgskk_runtime_with_dictionary(
+                fixture.runtime,
+                path.as_ptr(),
+                c"utf-8".as_ptr(),
+                ptr::null_mut(),
+            );
+            assert!(!replacement.is_null());
+            let other = tgskk_session_new(replacement, ptr::null_mut());
+            tgskk_runtime_free(replacement);
+            keys(fixture.session, "K a n j i space");
+            tgskk_session_select(fixture.session, 1);
+            assert_eq!(message((*keys(other, "K a n j i space")).preedit), "▼感じ");
+            assert_eq!(message(tgskk_candidate_text(other, 1)), "新候補");
+            tgskk_session_select(other, 1);
+            assert_eq!(
+                message((*keys(fixture.session, "K a n j i space")).preedit),
+                "▼新候補"
+            );
+            assert_eq!(tgskk_runtime_save(fixture.runtime, ptr::null_mut()), 1);
+            assert!(
+                std::fs::read_to_string(fixture.user.to_str().unwrap())
+                    .unwrap()
+                    .contains("新候補")
+            );
+            let mut error = ptr::null_mut();
+            assert!(
+                tgskk_runtime_with_dictionary(
+                    fixture.runtime,
+                    path.as_ptr(),
+                    c"invalid".as_ptr(),
+                    &raw mut error
+                )
+                .is_null()
+            );
+            tgskk_string_free(error);
+            tgskk_session_reset(fixture.session);
+            assert_eq!(message((*keys(fixture.session, "k a")).committed), "か");
+            tgskk_session_free(other);
         }
     }
 

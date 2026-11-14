@@ -159,8 +159,8 @@ static void doSave(HWND hwnd, State *state) {
     Config::save(c);
 
     SetWindowTextW(GetDlgItem(hwnd, IDC_STATUS),
-                   L"設定を保存しました。Windowsからサインアウトして、再度サイ"
-                   L"ンインすると反映されます。");
+                   L"設定を保存しました。入力中の場合は、確定または取り消し後に"
+                   L"反映されます。");
   } catch (const std::exception &e) {
     try {
       SetWindowTextW(GetDlgItem(hwnd, IDC_STATUS), wide(e.what()).c_str());
