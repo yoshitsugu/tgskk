@@ -76,6 +76,20 @@ public static class TgskkWindowProbe {
     $gui.Dispose()
   }
   $uninstaller = Join-Path $directory 'unins000.exe'
+  $class = Split-Path $registry
+  $originalAcl = Get-Acl $class
+  $denied = Get-Acl $class
+  $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+  $rule = [Security.AccessControl.RegistryAccessRule]::new($sid, [Security.AccessControl.RegistryRights]::Delete, [Security.AccessControl.AccessControlType]::Deny)
+  $denied.AddAccessRule($rule)
+  try {
+    Set-Acl $class $denied
+    $failed = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+    if ($failed.ExitCode -eq 0) { throw 'Uninstaller ignored failed TSF unregistration' }
+    if (!(Test-Path (Join-Path $directory 'tgskk-tip.dll')) -or !(Test-Path $registry)) {
+      throw 'Failed unregistration deleted files or the retained class path'
+    }
+  } finally { Set-Acl $class $originalAcl }
   $removed = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
   if ($removed.ExitCode -ne 0) { throw "Uninstaller failed: $($removed.ExitCode)" }
   if (Test-Path $registry) { throw 'Uninstall retained TSF registration' }

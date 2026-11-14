@@ -56,6 +56,11 @@ class StageWindowsTest(unittest.TestCase):
         self.llama_source.mkdir()
         (self.llama_source / "LICENSE").write_text("llama license")
 
+        self.vendor = self.root / "vendor"
+        crate = self.vendor / "aws-lc-sys-0.47.0"
+        crate.mkdir(parents=True)
+        (crate / "Cargo.toml").write_text('[package]\nname="aws-lc-sys"\nversion="0.47.0"\nlicense="ISC AND MIT AND BSD-3-Clause"\n')
+        (crate / "LICENSE").write_text("AWS-LC incorporated notices sentinel")
         self.output = self.root / "output"
 
         # Patch MODEL_SHA to match our synthetic model.
@@ -75,6 +80,7 @@ class StageWindowsTest(unittest.TestCase):
             str(self.runtime),
             "--llama-source",
             str(self.llama_source),
+            "--vendor", str(self.vendor),
             "--output",
             str(self.output),
         ]
@@ -110,6 +116,7 @@ class StageWindowsTest(unittest.TestCase):
 
         sums_file = payload / "SHA256SUMS"
         self.assertTrue(sums_file.exists())
+        self.assertEqual((payload / "licenses/rust/aws-lc-sys-0.47.0/LICENSE").read_text(), "AWS-LC incorporated notices sentinel")
         sums = {}
         for line in sums_file.read_text().splitlines():
             digest, rel = line.split("  ", 1)

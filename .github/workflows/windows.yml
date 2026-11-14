@@ -72,6 +72,8 @@ jobs:
           }
       - name: Build bundled Google helper
         run: cargo +1.88.0 build --release --manifest-path third_party/gskkserv/Cargo.toml --target-dir target --locked
+      - name: Bundle complete source and dependency notices
+        run: python scripts/windows-source.py
       - name: Stage Windows distribution
         shell: pwsh
         run: |
@@ -85,7 +87,7 @@ jobs:
           if (!$crt) { throw "MSVC redistributable runtime not found" }
           python scripts/stage-windows.py --binaries "$binaries" --runtime "$($crt.FullName)" `
             --dictionary build/windows-assets/SKK-JISYO.L --model build/models/zenz-v3.2-small-Q5_K_M.gguf `
-            --llama-source build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478 --output build/windows-package
+            --llama-source build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478 --output build/windows-package --vendor build/windows-source/vendor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build installer
         shell: pwsh
@@ -103,7 +105,6 @@ jobs:
       - name: Bundle source and checksums
         shell: bash
         run: |
-          git archive --format=tar.gz HEAD > build/windows-package/tgskk-source.tar.gz
           cp build/downloads/llama-*.tar.gz build/windows-package/
           cd build/windows-package
           sha256sum ./*.zip ./*-setup.exe ./*.tar.gz > SHA256SUMS

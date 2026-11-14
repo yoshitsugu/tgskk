@@ -306,10 +306,6 @@ static Config parseConfig(const std::wstring &directory,
   c.model = (std::filesystem::path(c.home) / L"models" /
              L"zenz-v3.2-small-Q5_K_M.gguf")
                 .wstring();
-  const auto sharedModel = sibling / L"models" / L"zenz-v3.2-small-Q5_K_M.gguf";
-  if (!std::filesystem::is_regular_file(c.model) &&
-      std::filesystem::is_regular_file(sharedModel))
-    c.model = sharedModel.wstring();
   wchar_t dictionary[32768];
   const auto n =
       GetEnvironmentVariableW(L"TGSKK_DICTIONARY", dictionary, 32768);
@@ -329,7 +325,7 @@ static Config parseConfig(const std::wstring &directory,
         (p.is_absolute() ? p : std::filesystem::path(c.home) / p).wstring());
   };
   size_t length = 0;
-  bool firstLine = true;
+  bool firstLine = true, explicitModel = false;
   while (std::getline(input, line)) {
     length += line.size() + 1;
     if (length > 65536)
@@ -354,9 +350,10 @@ static Config parseConfig(const std::wstring &directory,
       c.userDictionary = path(value);
     else if (key == "Worker")
       c.worker = path(value);
-    else if (key == "Model")
+    else if (key == "Model") {
       c.model = path(value);
-    else if (key == "GoogleHelper")
+      explicitModel = true;
+    } else if (key == "GoogleHelper")
       c.helper = path(value);
     else if (key == "AI") {
       if (value != "true" && value != "false")
@@ -389,6 +386,16 @@ static Config parseConfig(const std::wstring &directory,
     throw std::runtime_error("Invalid SKK server encoding");
   if (c.server != "Google" && c.server != "Custom" && c.server != "Disabled")
     throw std::runtime_error("Invalid SKK server mode");
+  if (!explicitModel) {
+    std::error_code error;
+    const bool userModel = std::filesystem::is_regular_file(c.model, error);
+    if (!userModel &&
+        (!error || error == std::errc::no_such_file_or_directory)) {
+      const auto shared = sibling / L"models" / L"zenz-v3.2-small-Q5_K_M.gguf";
+      if (std::filesystem::is_regular_file(shared, error))
+        c.model = shared.wstring();
+    }
+  }
   c.fingerprint = hash(configuration + utf8(c.dictionary) + utf8(c.worker) +
                        utf8(c.model) + utf8(c.helper) + utf8(c.userDictionary));
   return c;

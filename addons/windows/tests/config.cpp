@@ -18,8 +18,17 @@ int main() {
     require(GetTempPathW(MAX_PATH, temporary) != 0, "temporary path");
     directory = std::filesystem::path(temporary) /
                 (L"tgskk-config-" + std::to_wstring(randomId()));
-    auto config = Config::load(directory.wstring(),
-                               (directory / L"tgskk-broker.exe").wstring());
+    std::filesystem::create_directories(directory / L"bin" / L"models");
+    std::ofstream(directory / L"bin" / L"models" /
+                  L"zenz-v3.2-small-Q5_K_M.gguf")
+        << "model fixture";
+    auto config =
+        Config::load(directory.wstring(),
+                     (directory / L"bin" / L"tgskk-broker.exe").wstring());
+    require(config.model == (directory / L"bin" / L"models" /
+                             L"zenz-v3.2-small-Q5_K_M.gguf")
+                                .wstring(),
+            "shared model fallback");
     std::filesystem::create_directories(directory);
     std::ofstream(directory / L"SKK-JISYO.user", std::ios::binary)
         << "learned-dictionary";
@@ -35,6 +44,10 @@ int main() {
                 loaded.host == "localhost" && loaded.port == 1179 &&
                 loaded.inlineCandidates == 0 && loaded.encoding == "utf-8",
             "settings round trip");
+    std::ofstream(directory / L"models") << "block unused default model lookup";
+    require(Config::load(directory.wstring(), config.broker).model ==
+                config.model,
+            "explicit model was blocked by an unused default path");
     const auto original = read(directory / L"windows.ini");
     for (int fault = 0; fault < 4; ++fault) {
       auto invalid = config;

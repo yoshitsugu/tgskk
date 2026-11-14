@@ -5,7 +5,7 @@ from pathlib import Path
 from zenz_model import verified_download
 
 REVISION = '14a1df7ec8f84410f5fb006978cf00878768150a'
-DICTIONARY_SHA = '6cef65fa11ef0819a6bf5a0c7dae06c76526805325096ab016985489f82760a4'
+DICTIONARY_SHA = 'c791f578d1b4040fce282db29bc22b2cc7ea46f83e269fab2e0fa779e2967e40'
 URL = f'https://raw.githubusercontent.com/skk-dev/dict/{REVISION}/SKK-JISYO.L'
 
 

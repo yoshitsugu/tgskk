@@ -32,8 +32,9 @@ def verified_download(url, destination, expected, offline=False):
             print(f"Downloading {destination.name}")
             with urllib.request.urlopen(url, timeout=60) as response:
                 shutil.copyfileobj(response, output)
-        if digest(partial) != expected:
-            raise RuntimeError(f"SHA256 mismatch: {destination.name}")
+        actual = digest(partial)
+        if actual != expected:
+            raise RuntimeError(f"SHA256 mismatch: {destination.name} (expected {expected}, got {actual})")
         partial.chmod(0o644)
         partial.replace(destination)
     finally:

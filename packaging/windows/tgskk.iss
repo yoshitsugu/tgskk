@@ -83,3 +83,21 @@ begin
   if not Result then
     SuppressibleMsgBox('tgskk is in use. Close input applications and the broker, or sign out and retry. Your settings and learned dictionary will be kept.', mbError, MB_OK, IDOK);
 end;
+
+procedure CurUninstallStepChanged(Step: TUninstallStep);
+var Filename: string;
+begin
+  if Step = usUninstall then begin
+    if not FilesAvailable() then
+      RaiseException('tgskk is in use. Installed files were kept. Sign out and retry.');
+    Filename := ExpandConstant('{app}\tgskk-tip.dll');
+    if not UnregisterServer(True, Filename, True) then begin
+      try
+        RegisterServer(True, Filename, False);
+      except
+        Log('Could not restore TSF registration: ' + GetExceptionMessage);
+      end;
+      RaiseException('TSF unregistration failed. Installed files were kept. Check permissions and retry, or run Setup to repair.');
+    end;
+  end;
+end;

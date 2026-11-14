@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import re
@@ -54,7 +55,7 @@ def shasum(path: Path) -> str:
 def copy_file(src: Path, dst: Path) -> None:
     if src.is_symlink():
         raise ValueError(f"{src}: symlinks are not allowed")
-    shutil.copy2(src, dst)
+    shutil.copyfile(src, dst)
 
 
 def stage(args: argparse.Namespace) -> None:
@@ -129,6 +130,41 @@ def stage(args: argparse.Namespace) -> None:
         copy_file(root / "packaging/windows/dictionary-Unicode-LICENSE.txt", licenses / "dictionary-Unicode-LICENSE.txt")
         copy_file(root / "packaging/windows/NOTICE.md", licenses / "dictionary-NOTICE.md")
 
+        rust = licenses / "rust"
+        rust.mkdir()
+        index = []
+        for crate in sorted(args.vendor.iterdir()):
+            manifest = crate / "Cargo.toml"
+            if not crate.is_dir() or crate.is_symlink() or not manifest.is_file():
+                raise ValueError(f"Invalid vendored crate: {crate}")
+            package = tomllib.loads(manifest.read_text(encoding="utf-8"))["package"]
+            target = rust / crate.name
+            target.mkdir()
+            notices = [path for path in crate.iterdir()
+                       if path.name.lower().startswith(("license", "licence", "copying", "copyright", "notice"))]
+            explicit = package.get("license-file")
+            if explicit:
+                notice = (crate / explicit).resolve()
+                notice.relative_to(crate.resolve())
+                notices.append(notice)
+            for notice in set(notices):
+                if notice.is_symlink():
+                    raise ValueError(f"Symlink in dependency notice: {notice}")
+                if notice.is_dir():
+                    for item in notice.rglob("*"):
+                        if item.is_file():
+                            destination = target / item.relative_to(crate)
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            copy_file(item, destination)
+                else:
+                    copy_file(notice, target / notice.name)
+            index.append({"name": package["name"], "version": package["version"],
+                          "license": package.get("license"), "repository": package.get("repository"),
+                          "authors": package.get("authors", []), "source": f"vendor/{crate.name}"})
+        if not index:
+            raise ValueError("The vendored dependency directory is empty")
+        (rust / "index.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+
         llama_license = args.llama_source / "LICENSE"
         if not llama_license.exists():
             raise FileNotFoundError(f"{llama_license}: llama LICENSE missing")
@@ -169,11 +205,13 @@ def main(argv=None):
     parser.add_argument("--model", type=Path, required=True, metavar="FILE")
     parser.add_argument("--runtime", type=Path, required=True, metavar="DIR")
     parser.add_argument("--llama-source", type=Path, required=True, metavar="DIR")
+    parser.add_argument("--vendor", type=Path, required=True, metavar="DIR")
     parser.add_argument("--output", type=Path, required=True, metavar="DIR")
     args = parser.parse_args(argv)
 
     checks = (
         ("binaries", args.binaries, True),
+        ("vendor", args.vendor, True),
         ("dictionary", args.dictionary, False),
         ("model", args.model, False),
         ("runtime", args.runtime, True),
