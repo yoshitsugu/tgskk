@@ -115,7 +115,10 @@ void CALLBACK connectThread(PTP_CALLBACK_INSTANCE instance, void *argument) {
             break;
           }
           if (!launched) {
-            launchBroker(job->config);
+            if (!launchBroker(job->config) &&
+                !std::filesystem::is_regular_file(job->config.broker))
+              throw std::runtime_error("Broker executable is unavailable; "
+                                       "local input remains active");
             launched = true;
           }
           Sleep(25);
