@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 use tgskk_core::input::{CskkDictionary, CskkKeyEvent, InputSession};
 use tgskk_zenz::{Assistance, Evaluator, Status, Worker};
 
-fn percentile(times: &mut [f64], fraction: f64) -> f64 {
+fn percentile(times: &mut [f64], percent: usize) -> f64 {
     times.sort_by(f64::total_cmp);
-    times[((times.len() - 1) as f64 * fraction).ceil() as usize]
+    times[((times.len() - 1) * percent).div_ceil(100)]
 }
 #[allow(clippy::arc_with_non_send_sync)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,8 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!(
         "scorer_accuracy={correct}/{total}, scoring_p50_ms={:.3}, scoring_p95_ms={:.3}",
-        percentile(&mut times, 0.5),
-        percentile(&mut times, 0.95)
+        percentile(&mut times, 50),
+        percentile(&mut times, 95)
     );
     drop(evaluator);
     let worker = Worker::start(args[0].clone().into(), args[1].clone().into())?;
@@ -114,9 +114,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "space_p50_ms={:.3}, space_p99_ms={:.3}, key_p99_ms={:.3}",
-        percentile(&mut spaces, 0.5),
-        percentile(&mut spaces, 0.99),
-        percentile(&mut keys, 0.99)
+        percentile(&mut spaces, 50),
+        percentile(&mut spaces, 99),
+        percentile(&mut keys, 99)
     );
     if stable != 50 {
         return Err("An exposed candidate list changed after inference completed".into());

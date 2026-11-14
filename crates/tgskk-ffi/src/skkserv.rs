@@ -83,7 +83,7 @@ pub(super) unsafe extern "C" fn tgskk_skkserv_take_error(
     catch_unwind(AssertUnwindSafe(|| {
         unsafe { server.as_ref() }
             .and_then(|s| s.worker.take_error())
-            .map_or(ptr::null_mut(), |message| diagnostic(message).into_raw())
+            .map_or(ptr::null_mut(), |message| diagnostic(&message).into_raw())
     }))
     .unwrap_or(ptr::null_mut())
 }

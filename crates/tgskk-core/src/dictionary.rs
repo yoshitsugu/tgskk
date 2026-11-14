@@ -77,6 +77,7 @@ impl Dictionary {
         })
     }
 
+    #[must_use]
     pub fn lookup(&self, reading: &str) -> Arc<[Candidate]> {
         self.entries.get(reading).cloned().unwrap_or_default()
     }

@@ -1,16 +1,19 @@
+#![allow(
+    deprecated,
+    reason = "The C ABI preserves access to deprecated CSKK state helpers."
+)]
 use crate::cskkstate::PreCompositionData;
 use crate::dictionary::CskkDictionary;
 use crate::keyevent::CskkKeyEvent;
 use crate::skk_modes::{CommaStyle, CompositionMode, InputMode, PeriodStyle};
 use crate::CskkError::Error;
 use crate::{
-    get_available_rules, skk_context_confirm_candidate_at_rs, skk_context_get_composition_mode_rs,
+    get_available_rules, skk_context_confirm_candidate_at_rs,
     skk_context_get_current_candidate_count_rs,
     skk_context_get_current_candidate_cursor_position_rs, skk_context_get_current_candidates_rs,
-    skk_context_get_current_to_composite_rs, skk_context_get_input_mode_rs,
-    skk_context_poll_output_rs, skk_context_reset_rs, skk_context_select_candidate_at_rs,
-    skk_context_set_auto_start_henkan_keywords_rs, skk_context_set_comma_style_rs,
-    skk_context_set_dictionaries_rs, skk_context_set_input_mode_rs,
+    skk_context_get_current_to_composite_rs, skk_context_poll_output_rs, skk_context_reset_rs,
+    skk_context_select_candidate_at_rs, skk_context_set_auto_start_henkan_keywords_rs,
+    skk_context_set_comma_style_rs, skk_context_set_dictionaries_rs, skk_context_set_input_mode_rs,
     skk_context_set_period_style_rs, CskkContext, CskkError, CskkStateInfo,
 };
 use std::convert::TryFrom;
@@ -442,11 +445,7 @@ pub unsafe extern "C" fn skk_context_process_key_events(
         Ok(context.process_key_events_string(keyevents.to_str()?))
     })();
 
-    if let Ok(result) = maybe_result {
-        result
-    } else {
-        false
-    }
+    maybe_result.unwrap_or_default()
 }
 
 ///
@@ -566,10 +565,8 @@ fn convert_state_info(state_info: CskkStateInfo) -> CskkStateInfoFfi {
                 .unwrap_or_default()
                 .into_raw();
 
-            let unconverted = if direct_data.unconverted.is_some() {
-                CString::new(direct_data.unconverted.unwrap())
-                    .unwrap()
-                    .into_raw()
+            let unconverted = if let Some(unconverted) = direct_data.unconverted {
+                CString::new(unconverted).unwrap().into_raw()
             } else {
                 ptr::null_mut()
             };
@@ -1105,7 +1102,7 @@ unsafe fn dictionaries_from_c_repr(
     for dictref in tmp_array {
         let cskkdict = Box::from_raw(*dictref);
         dict_array.push(cskkdict.dictionary.clone());
-        Box::into_raw(cskkdict);
+        let _ = Box::into_raw(cskkdict);
     }
     dict_array
 }

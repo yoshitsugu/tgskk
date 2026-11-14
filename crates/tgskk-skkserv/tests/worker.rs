@@ -85,7 +85,7 @@ fn read_request(stream: &mut TcpStream) -> Vec<u8> {
                     break;
                 }
             }
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => break,
         }
     }
@@ -475,8 +475,7 @@ fn hostname_host_is_resolved_by_worker() {
     let probe_port = probe.local_addr().expect("probe addr").port();
     let resolves_to_v4 = ("localhost", probe_port)
         .to_socket_addrs()
-        .map(|mut addresses| addresses.any(|addr| addr.ip().is_loopback() && addr.is_ipv4()))
-        .unwrap_or(false);
+        .is_ok_and(|mut addresses| addresses.any(|addr| addr.ip().is_loopback() && addr.is_ipv4()));
     drop(probe);
     if !resolves_to_v4 {
         return;

@@ -35,7 +35,7 @@ xdg = { version = "^2.4" }
 anyhow = { version = "^1.0.100" }
 nom = "^8.0.0"
 serde_with = { version = "3.0.0", features = ["macros"] }
-lru_ordered_map = { path = "../lru_ordered_map" }
+lru_ordered_map = { path = "../lru_ordered_map", version = "4.0.0" }
 tempfile = "^3.3"
 
 [dev-dependencies]
@@ -84,3 +84,7 @@ assets = [["../assets/**/*", "usr/local/share/libcskk/", "644"],
     ["target/release/cskk.pc", "usr/local/lib/pkgconfig/", "644"],
     ["target/release/libcskk.h", "usr/local/include/cskk/", "644"]]
 
+
+[lints.clippy]
+# The public Arc-based dictionary API is retained; RefCell-backed dictionaries stay on their owning thread.
+arc_with_non_send_sync = "allow"

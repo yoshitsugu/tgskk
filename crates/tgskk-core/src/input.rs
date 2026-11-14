@@ -18,6 +18,7 @@ pub struct ModeChange {
 }
 
 impl ModeChange {
+    #[must_use]
     pub fn label(&self) -> &'static str {
         mode_label(self.to)
     }
@@ -73,10 +74,12 @@ impl InputSession {
         self.context.set_missing_conversion_provider(provider);
     }
 
+    #[must_use]
     pub fn preview_conversion(&self) -> Option<ConversionRequest> {
         self.context.preview_conversion()
     }
 
+    #[must_use]
     pub fn preview_conversion_limited(&self, limit: usize) -> Option<ConversionRequest> {
         self.context.preview_conversion_limited(limit)
     }
@@ -115,14 +118,17 @@ impl InputSession {
         }
     }
 
+    #[must_use]
     pub fn composition_mode(&self) -> CompositionMode {
         self.context.get_current_composition_mode()
     }
 
+    #[must_use]
     pub fn input_mode(&self) -> InputMode {
         self.context.get_current_input_mode()
     }
 
+    #[must_use]
     pub fn mode_label(&self) -> &'static str {
         mode_label(self.input_mode())
     }
@@ -134,12 +140,14 @@ impl InputSession {
         )
     }
 
+    #[must_use]
     pub fn candidate_cursor(&self) -> Option<usize> {
         self.is_selecting()
             .then(|| cskk::skk_context_get_current_candidate_cursor_position_rs(&self.context).ok())
             .flatten()
     }
 
+    #[must_use]
     pub fn candidates(&self) -> Vec<ConversionCandidate> {
         cskk::skk_context_get_current_candidates_rs(&self.context)
             .iter()

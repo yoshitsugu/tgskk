@@ -1,0 +1,29 @@
+[graph]
+all-features = true
+
+[advisories]
+unmaintained = "all"
+yanked = "deny"
+ignore = [
+    # The bundled upstream server uses these APIs; replacing them needs separate compatibility work.
+    { id = "RUSTSEC-2025-0069", reason = "daemonize 0.5 is retained for the upstream server's optional Unix daemon mode; no vulnerability is reported." },
+    { id = "RUSTSEC-2021-0153", reason = "encoding 0.2.33 is retained for upstream EUC-JP error semantics; no vulnerability is reported." },
+]
+
+[licenses]
+confidence-threshold = 0.95
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0", "GPL-3.0-or-later", "CC0-1.0", "CDLA-Permissive-2.0"]
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+skip = [
+    { name = "syn", version = "=1.0.109", reason = "enum-display-derive in vendored CSKK still requires syn 1." },
+    { name = "syn", version = "=2.0.119", reason = "JNI macros in reqwest's Android TLS dependency still require syn 2." },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

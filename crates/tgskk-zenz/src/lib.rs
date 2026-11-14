@@ -1,5 +1,5 @@
 //! Local candidate scoring. The input thread only offers jobs and reads ready
-//! results with try_lock; model loading and IPC belong to the worker thread.
+//! results with `try_lock`; model loading and IPC belong to the worker thread.
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -19,7 +19,7 @@ const MAX_BYTES: usize = 1024;
 const CACHE_SIZE: usize = 16;
 const MIN_MARGIN: f64 = 1.5;
 // A changed wire format must use a different handshake, including refusals.
-const PROTOCOL_MAGIC: u32 = 0x325A4754;
+const PROTOCOL_MAGIC: u32 = 0x325A_4754;
 const REJECTED_REQUEST: u32 = u32::MAX;
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const UNAVAILABLE_AFTER_FAILURES: usize = 4;
@@ -95,6 +95,7 @@ impl Worker {
             })?;
         Ok(Self(Arc::new(Service { queue })))
     }
+    #[must_use]
     pub fn status(&self) -> Status {
         match self.0.queue.status.load(Ordering::Acquire) {
             1 => Status::Ready,
@@ -103,6 +104,7 @@ impl Worker {
         }
     }
     /// Returns each diagnostic once, without logging or retaining input text.
+    #[must_use]
     pub fn take_error(&self) -> Option<String> {
         self.0.queue.diagnostic.try_lock().ok()?.take()
     }
@@ -170,7 +172,13 @@ impl Process {
     }
     fn score(&mut self, key: &Key) -> io::Result<Vec<f64>> {
         let mut frame = Vec::new();
-        frame.extend_from_slice(&(key.candidates.len() as u32).to_le_bytes());
+        frame.extend_from_slice(
+            &u32::try_from(key.candidates.len())
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "Too many Zenz candidates")
+                })?
+                .to_le_bytes(),
+        );
         for text in std::iter::once(&key.context)
             .chain(std::iter::once(&key.reading))
             .chain(key.candidates.iter().map(|c| &c.text))
@@ -181,7 +189,11 @@ impl Process {
                     "Zenz input too long",
                 ));
             }
-            frame.extend_from_slice(&(text.len() as u32).to_le_bytes());
+            frame.extend_from_slice(
+                &u32::try_from(text.len())
+                    .expect("MAX_BYTES fits in u32")
+                    .to_le_bytes(),
+            );
             frame.extend_from_slice(text.as_bytes());
         }
         self.socket.write_all(&frame)?;
@@ -528,9 +540,11 @@ impl Assistance {
             epoch: state.epoch.clone(),
         });
     }
+    #[must_use]
     pub fn applied(&self) -> bool {
         self.0.borrow().applied
     }
+    #[must_use]
     pub fn counts(&self) -> (u64, u64) {
         let s = self.0.borrow();
         (s.hits, s.misses)
@@ -693,7 +707,7 @@ mod tests {
         let before = epoch.load(Ordering::Acquire);
         assistance.context("password", false);
         assert_ne!(before, epoch.load(Ordering::Acquire));
-        assert!(assistance.0.borrow().context.is_empty());
+        assert_eq!(assistance.0.borrow().context, "");
         assert!(assistance.0.borrow_mut().response(&req).order.is_none());
         assistance.context("駅で", true);
         assistance.reset();
@@ -1006,8 +1020,8 @@ mod tests {
         assistance.prefetch(&input);
         let job = worker.0.queue.pending.lock().unwrap().take().unwrap();
         assert_eq!(job.key.context, "駅で");
-        assert!(job.key.reading.is_empty());
-        assert!(job.key.candidates.is_empty());
+        assert_eq!(job.key.reading, "");
+        assert!(job.key.candidates.is_empty(), "{:?}", job.key.candidates);
         ready(&assistance, &request(), vec![-6., -0.2, -8., -9.]);
         worker
             .0

@@ -1,3 +1,7 @@
+#![allow(
+    dead_code,
+    reason = "Each integration test uses a different subset of these shared helpers."
+)]
 use cskk::cskkstate::CskkStateInfo;
 use cskk::dictionary::CskkDictionary;
 use cskk::skk_modes::{CompositionMode, InputMode};

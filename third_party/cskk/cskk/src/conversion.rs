@@ -277,7 +277,7 @@ mod tests {
                 text: text.into(),
                 annotation: None,
             };
-            assert!(candidate.validate_external().is_ok(), "{text:?}");
+            assert!(candidate.validate_external().is_ok(), "{:?}", text);
         }
         for text in ["", "[注]", "(concat x)", "a\nb", "#0回", "a\\b"] {
             let candidate = ConversionCandidate {

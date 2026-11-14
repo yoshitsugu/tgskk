@@ -14,16 +14,20 @@ pub struct RankingRequest {
 }
 
 impl RankingRequest {
+    #[must_use]
     pub fn reading(&self) -> &str {
         &self.reading
     }
+    #[must_use]
     pub fn left_context(&self) -> &str {
         &self.left_context
     }
+    #[must_use]
     pub fn candidates(&self) -> &[Candidate] {
         &self.candidates
     }
 
+    #[must_use]
     pub fn ranked(self, order: Vec<usize>) -> RankingResult {
         RankingResult {
             request: self,
@@ -63,6 +67,7 @@ pub struct Engine {
 }
 
 impl Engine {
+    #[must_use]
     pub fn new(dictionary: Dictionary, cache_capacity: usize) -> Self {
         Self {
             dictionary,
@@ -119,6 +124,7 @@ impl Engine {
         }
     }
 
+    #[must_use]
     pub fn candidates(&self) -> &[Candidate] {
         self.conversion
             .as_ref()

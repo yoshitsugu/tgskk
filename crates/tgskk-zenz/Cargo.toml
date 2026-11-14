@@ -3,9 +3,13 @@ name = "tgskk-zenz"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-tgskk-core = { path = "../tgskk-core" }
+tgskk-core = { path = "../tgskk-core", version = "0.1.0" }
 
 [dev-dependencies]
 tempfile = "3.3"
+
+[lints]
+workspace = true

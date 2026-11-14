@@ -1,4 +1,4 @@
-use std::{hint::black_box, time::Instant};
+use std::{fmt::Write, hint::black_box, time::Instant};
 use tgskk_core::{Dictionary, Engine};
 
 fn measure(name: &str, mut lookup: impl FnMut()) {
@@ -11,7 +11,7 @@ fn measure(name: &str, mut lookup: impl FnMut()) {
         for _ in 0..100 {
             lookup();
         }
-        samples.push(start.elapsed().as_nanos() as f64 / 100.0);
+        samples.push(start.elapsed().as_secs_f64() * 1e9 / 100.0);
     }
     samples.sort_by(f64::total_cmp);
     println!(
@@ -21,9 +21,10 @@ fn measure(name: &str, mut lookup: impl FnMut()) {
 }
 
 fn main() {
-    let source: String = (0..10_000)
-        .map(|i| format!("よみ{i} /候補{i}/別候補{i}/\n"))
-        .collect();
+    let mut source = String::new();
+    for i in 0..10_000 {
+        writeln!(source, "よみ{i} /候補{i}/別候補{i}/").unwrap();
+    }
     let start = Instant::now();
     let dictionary = Dictionary::parse_utf8(&source).unwrap();
     println!("synthetic 10,000 entries, parse={:?}", start.elapsed());

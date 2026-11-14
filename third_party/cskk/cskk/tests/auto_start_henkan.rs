@@ -148,7 +148,7 @@ fn auto_start_henkan_register_not_includes_period() {
         .encoding(enc)
         .build(dict_file);
     let reader = BufReader::new(decoder);
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map(|line| line.expect("read test fixture")) {
         if !line.starts_with(";;") {
             assert_eq!(line, "ああ /あ/");
         }
