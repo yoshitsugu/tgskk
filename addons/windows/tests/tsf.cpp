@@ -431,9 +431,9 @@ void idleEditingKeys(ITfKeyEventSink *keys, ITfContext *context, Store *store) {
     if (modifiers & 2)
       state[VK_CONTROL] = state[VK_LCONTROL] = 0x80;
     require(SetKeyboardState(state), "application editing key state");
-    for (UINT code : {VK_BACK, VK_RETURN, VK_TAB, VK_ESCAPE, VK_LEFT, VK_UP,
-                      VK_RIGHT, VK_DOWN, VK_PRIOR, VK_NEXT, VK_HOME, VK_END,
-                      VK_DELETE}) {
+    for (UINT code :
+         {VK_BACK, VK_RETURN, VK_TAB, VK_ESCAPE, VK_LEFT, VK_UP, VK_RIGHT,
+          VK_DOWN, VK_PRIOR, VK_NEXT, VK_HOME, VK_END, VK_DELETE}) {
       const LPARAM scan = 1 | (MapVirtualKeyW(code, MAPVK_VK_TO_VSC) << 16);
       const auto before = store->startedCompositions;
       BOOL eligible = TRUE, consumed = TRUE;
@@ -859,8 +859,8 @@ int run(int argc, char **argv) {
       auto convert = [&](const std::wstring &prefix) {
         store->replace(prefix);
         pump();
-        require(key('K', true) && key('I') && key('S') && key('H') && key('A') &&
-                    key(VK_SPACE),
+        require(key('K', true) && key('I') && key('S') && key('H') &&
+                    key('A') && key(VK_SPACE),
                 "contextual conversion keys");
       };
       bool train = false;
@@ -906,9 +906,9 @@ int run(int argc, char **argv) {
     require(store->text.empty(), "focus retained preedit");
     require(!key('K', false, true), "Win shortcut consumed");
     require(store->text.empty(), "Win shortcut changed document");
-    for (auto scope : {IS_PASSWORD, IS_PRIVATE, IS_NUMERIC_PASSWORD,
-                       IS_NUMERIC_PIN, IS_ALPHANUMERIC_PIN,
-                       IS_ALPHANUMERIC_PIN_SET}) {
+    for (auto scope :
+         {IS_PASSWORD, IS_PRIVATE, IS_NUMERIC_PASSWORD, IS_NUMERIC_PIN,
+          IS_ALPHANUMERIC_PIN, IS_ALPHANUMERIC_PIN_SET}) {
       store->setScope(scope);
       pump();
       require(!key('K', true), "sensitive field consumed input");

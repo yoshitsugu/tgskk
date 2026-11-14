@@ -31,7 +31,8 @@ int main() {
                  0);
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(IDC_SAVE, BN_CLICKED), 0);
     auto saved = Config::load(directory.wstring(), config.broker);
-    require(saved.inlineCandidates == 7 && !saved.ai && saved.skkservWithoutInputScope,
+    require(saved.inlineCandidates == 7 && !saved.ai &&
+                saved.skkservWithoutInputScope,
             "GUI did not save controls");
     require(GetWindowTextLengthW(GetDlgItem(window, IDC_STATUS)) > 0,
             "no save feedback");

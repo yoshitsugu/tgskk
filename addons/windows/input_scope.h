@@ -36,7 +36,7 @@ inline InputScopePolicy inputScopePolicy(HRESULT status, const VARIANT &value) {
     return {E_INVALIDARG, false};
   ITfInputScope *object = nullptr;
   status = value.punkVal->QueryInterface(IID_ITfInputScope,
-                                       reinterpret_cast<void **>(&object));
+                                         reinterpret_cast<void **>(&object));
   if (FAILED(status) || !object)
     return {FAILED(status) ? status : E_UNEXPECTED, false};
   InputScope *scopes = nullptr;
@@ -54,8 +54,9 @@ inline InputScopePolicy inputScopePolicy(HRESULT status, const VARIANT &value) {
         break;
       }
       // New or invalid scope values are not evidence of a non-private field.
-      known &= (scopes[i] >= IS_DEFAULT && scopes[i] <= IS_CHAT_WITHOUT_EMOJI) ||
-               (scopes[i] >= IS_ENUMSTRING && scopes[i] <= IS_PHRASELIST);
+      known &=
+          (scopes[i] >= IS_DEFAULT && scopes[i] <= IS_CHAT_WITHOUT_EMOJI) ||
+          (scopes[i] >= IS_ENUMSTRING && scopes[i] <= IS_PHRASELIST);
     }
   }
   CoTaskMemFree(scopes);

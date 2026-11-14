@@ -32,7 +32,8 @@ int main() {
                                   .wstring()),
             "shared model fallback");
     std::filesystem::create_directories(directory);
-    require(!config.skkservWithoutInputScope, "missing-scope server must default off");
+    require(!config.skkservWithoutInputScope,
+            "missing-scope server must default off");
     std::ofstream(directory / L"SKK-JISYO.user", std::ios::binary)
         << "learned-dictionary";
     config.ai = false;
@@ -52,7 +53,8 @@ int main() {
     const auto original = read(directory / L"windows.ini");
     std::ofstream(directory / L"windows.ini")
         << "[General]\nSkkservWithoutInputScope=false\n";
-    require(!Config::load(directory.wstring(), config.broker).skkservWithoutInputScope,
+    require(!Config::load(directory.wstring(), config.broker)
+                 .skkservWithoutInputScope,
             "explicit missing-scope server opt-out");
     std::ofstream(directory / L"windows.ini")
         << "[General]\nSkkservWithoutInputScope=invalid\n";
@@ -62,7 +64,8 @@ int main() {
     } catch (const std::exception &) {
       invalidScopeSetting = true;
     }
-    require(invalidScopeSetting, "invalid missing-scope server setting accepted");
+    require(invalidScopeSetting,
+            "invalid missing-scope server setting accepted");
     std::ofstream(directory / L"windows.ini", std::ios::binary) << original;
     const auto userModels = directory / L"models";
     std::filesystem::create_directories(userModels);

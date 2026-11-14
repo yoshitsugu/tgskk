@@ -140,8 +140,9 @@ static void doSave(HWND hwnd, State *state) {
       c.server = "Disabled";
 
     c.helper = getWindowText(GetDlgItem(hwnd, IDC_HELPER_EDIT));
-    c.skkservWithoutInputScope = SendMessageW(
-        GetDlgItem(hwnd, IDC_SKKSERV_WITHOUT_SCOPE_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    c.skkservWithoutInputScope =
+        SendMessageW(GetDlgItem(hwnd, IDC_SKKSERV_WITHOUT_SCOPE_CHECK),
+                     BM_GETCHECK, 0, 0) == BST_CHECKED;
     c.host = utf8(getWindowText(GetDlgItem(hwnd, IDC_HOST_EDIT)));
 
     auto portText = getWindowText(GetDlgItem(hwnd, IDC_PORT_EDIT));
@@ -266,10 +267,12 @@ static void createControls(HWND hwnd, State *state) {
           kH, ES_NUMBER);
 
   y = row(12);
-  HWND withoutScope = addButton(hwnd, state->instance, IDC_SKKSERV_WITHOUT_SCOPE_CHECK,
-      L"入力欄の属性が取得できない場合もSKKサーバを使う",
-      xLabel, y, kClientW - 2 * kMargin, kH, BS_AUTOCHECKBOX);
-  SendMessageW(withoutScope, BM_SETCHECK,
+  HWND withoutScope =
+      addButton(hwnd, state->instance, IDC_SKKSERV_WITHOUT_SCOPE_CHECK,
+                L"入力欄の属性が取得できない場合もSKKサーバを使う", xLabel, y,
+                kClientW - 2 * kMargin, kH, BS_AUTOCHECKBOX);
+  SendMessageW(
+      withoutScope, BM_SETCHECK,
       state->config.skkservWithoutInputScope ? BST_CHECKED : BST_UNCHECKED, 0);
 
   y = row(13);

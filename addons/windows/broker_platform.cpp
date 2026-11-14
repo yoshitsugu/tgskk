@@ -379,7 +379,8 @@ static Config parseConfig(const std::wstring &directory,
       c.ai = value == "true";
     } else if (key == "SkkservWithoutInputScope") {
       if (value != "true" && value != "false")
-        throw std::runtime_error("SkkservWithoutInputScope must be true or false");
+        throw std::runtime_error(
+            "SkkservWithoutInputScope must be true or false");
       c.skkservWithoutInputScope = value == "true";
     } else if (key == "Skkserv")
       c.server = value;
@@ -453,7 +454,8 @@ void Config::save(const Config &config) {
   field("Encoding", config.encoding);
   field("AI", config.ai ? "true" : "false");
   field("Skkserv", config.server);
-  field("SkkservWithoutInputScope", config.skkservWithoutInputScope ? "true" : "false");
+  field("SkkservWithoutInputScope",
+        config.skkservWithoutInputScope ? "true" : "false");
   field("Host", config.host);
   field("Port", std::to_string(config.port));
   field("ServerEncoding", config.serverEncoding);
