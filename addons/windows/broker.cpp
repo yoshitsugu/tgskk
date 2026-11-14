@@ -139,6 +139,12 @@ void acceptClients(Handle listener, PipeSecurity &security,
     }
     DisconnectNamedPipe(listener.value);
   }
+  // An unexpected listener failure must not leave an unreachable broker alive.
+  if (!queue->stopped &&
+      WaitForSingleObject(shutdownEvent.value, 0) != WAIT_OBJECT_0) {
+    std::fputs("tgskk broker: listener stopped; shutting down\n", stderr);
+    SetEvent(shutdownEvent.value);
+  }
 }
 struct Session {
   TgskkSession *input;

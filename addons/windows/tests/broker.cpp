@@ -16,6 +16,38 @@ void require(bool okay, const std::string &message) {
   if (!okay)
     throw std::runtime_error(message);
 }
+void abandonedConnection() {
+  const auto identity = Identity::current();
+  PipeSecurity security(identity);
+  const auto name = endpoint(identity, executablePath(), executablePath()) +
+                    L"-abandoned-" + std::to_wstring(randomId());
+  auto listener = makePipe(name, security);
+  {
+    auto abandoned = openPipe(name);
+    require(bool(abandoned), "open client before server accepts");
+  }
+  Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+  require(bool(stop), "create abandoned-connection stop event");
+  bool accepted = false;
+  std::atomic<bool> finished = false;
+  std::jthread acceptor([&] {
+    accepted = acceptPipe(listener.value, stop.value, 1000);
+    finished = true;
+  });
+  Handle next;
+  const auto deadline = monotonicMillis() + 1000;
+  while (!next && !finished && monotonicMillis() < deadline) {
+    next = openPipe(name);
+    if (!next)
+      Sleep(1);
+  }
+  if (!next)
+    SetEvent(stop.value);
+  acceptor.join();
+  require(next && accepted,
+          "client disconnect before accept disabled the broker listener");
+  std::puts("abandoned startup connection retained the broker listener");
+}
 struct Directory {
   std::filesystem::path path;
   Directory() {
@@ -757,6 +789,7 @@ int wmain(int argc, wchar_t **argv) {
       aiCases(program, dictionary, canonicalPath(argv[3]),
               canonicalPath(argv[4]));
     else {
+      abandonedConnection();
       sharedAndPersistence(program, dictionary);
       malformedAndIsolation(program, dictionary);
       serverCases(program, dictionary);

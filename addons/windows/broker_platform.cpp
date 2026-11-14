@@ -142,23 +142,42 @@ bool acceptPipe(HANDLE pipe, HANDLE stop, DWORD timeout) {
   Handle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
   if (!event)
     return false;
-  OVERLAPPED overlap{};
-  overlap.hEvent = event.value;
-  if (ConnectNamedPipe(pipe, &overlap))
-    return true;
-  DWORD error = GetLastError();
-  if (error == ERROR_PIPE_CONNECTED)
-    return true;
-  if (error != ERROR_IO_PENDING)
-    return false;
-  HANDLE events[] = {event.value, stop};
-  const DWORD result =
-      WaitForMultipleObjects(stop ? 2 : 1, events, FALSE, timeout);
-  if (result != WAIT_OBJECT_0)
-    CancelIoEx(pipe, &overlap);
-  DWORD bytes = 0;
-  const BOOL done = GetOverlappedResult(pipe, &overlap, &bytes, TRUE);
-  return result == WAIT_OBJECT_0 && done;
+  const auto started = GetTickCount64();
+  for (;;) {
+    if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0)
+      return false;
+    const auto elapsed = GetTickCount64() - started;
+    if (timeout != INFINITE && elapsed >= timeout)
+      return false;
+    OVERLAPPED overlap{};
+    overlap.hEvent = event.value;
+    ResetEvent(event.value);
+    if (ConnectNamedPipe(pipe, &overlap))
+      return true;
+    const DWORD error = GetLastError();
+    if (error == ERROR_PIPE_CONNECTED)
+      return true;
+    if (error == ERROR_NO_DATA) {
+      // A client can time out while the broker is still loading dictionaries.
+      // Reset its abandoned connection instead of losing the listener thread.
+      if (!DisconnectNamedPipe(pipe))
+        return false;
+      continue;
+    }
+    if (error != ERROR_IO_PENDING)
+      return false;
+    HANDLE events[] = {event.value, stop};
+    const DWORD remaining = timeout == INFINITE
+                                ? INFINITE
+                                : timeout - static_cast<DWORD>(elapsed);
+    const DWORD result =
+        WaitForMultipleObjects(stop ? 2 : 1, events, FALSE, remaining);
+    if (result != WAIT_OBJECT_0)
+      CancelIoEx(pipe, &overlap);
+    DWORD bytes = 0;
+    const BOOL done = GetOverlappedResult(pipe, &overlap, &bytes, TRUE);
+    return result == WAIT_OBJECT_0 && done;
+  }
 }
 Channel::Channel(Handle handle)
     : pipe(std::move(handle)),
