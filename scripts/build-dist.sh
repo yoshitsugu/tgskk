@@ -17,7 +17,7 @@ case "${1:-}" in
     python3 scripts/setup-zenz.py --offline --no-model --prefix /usr --jobs "$CMAKE_BUILD_PARALLEL_LEVEL"
     cmake -S addons/fcitx5 -B build/fcitx5 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DTGSKK_INSTALL_GOOGLE_HELPER=OFF
     cmake --build build/fcitx5
-    cmake -S addons/ibus -B build/ibus -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DTGSKK_INSTALL_GOOGLE_HELPER=OFF
+    cmake -S addons/ibus -B build/ibus -G Ninja -DTGSKK_REQUIRE_GUI_TESTS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DTGSKK_INSTALL_GOOGLE_HELPER=OFF
     cmake --build build/ibus
     ;;
   check)

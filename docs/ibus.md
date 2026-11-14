@@ -13,7 +13,8 @@ fcitx5版を導入する必要はありません。
 
 ## ソースからビルドして導入
 
-Rust 1.88以降、C++20、CMake、Ninja、pkg-config、libxkbcommon、IBus 1.5.26以降、GLibとGTK 3の開発ファイル、D-Bus、Xvfbが必要です。
+Rust 1.88以降、C++20、CMake、Ninja、pkg-config、libxkbcommon、IBus 1.5.26以降、GLibとGTK 3の開発ファイル、D-Busが必要です。
+GUIテストにはXvfbを使います。Xvfbがない場合はGUIテストだけを省略し、警告します。
 Debian/Ubuntuの開発パッケージは`libibus-1.0-dev libxkbcommon-dev libglib2.0-dev libgtk-3-dev dbus xvfb xauth`、Archは`ibus libxkbcommon glib2 gtk3 dbus xorg-server-xvfb xorg-xauth`です。
 SKK辞書（`skkdic`または`skk-jisyo`）も用意してください。
 
@@ -43,6 +44,9 @@ fcitx5とIBusを同じ入力欄で同時に使用しないでください。
 GNOMEの「設定」→「キーボード」→「入力ソース」でtgskkの設定を開けます。
 `ibus-setup`でtgskkを選んで「設定」を押すこともできます。
 辞書、AI、SKKサーバー、候補一覧を出すまでの候補数を変更できます。
+ユーザー辞書とモデルの欄は、空欄のままなら既定パスと自動検出を使います。
+不正な設定値があっても設定画面で修正でき、保存するまでは元のファイルを変更しません。
+INIファイル自体の書式が壊れている場合は、読み込みエラーとして通知します。
 保存しても入力中のエンジンは再起動しません。
 入力を確定してから`ibus restart`を実行するか、ログインし直してください。
 Fcitx5版は「Fcitx 5 設定」のtgskkの設定ボタンから変更できます。
