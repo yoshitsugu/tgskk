@@ -67,20 +67,62 @@ int main(int argc, char **argv) {
   g_assert_cmpstr(restored.encoding.c_str(), ==, "utf-8");
   g_assert_true(bytes(path).find("# retain comment") != std::string::npos);
   g_assert_true(bytes(path).find("FutureOption=retain") != std::string::npos);
+  g_assert_true(restored.modelAutomatic);
+  g_assert_true(restored.userDictionaryAutomatic);
+  g_assert_true(bytes(path).find("ZenzModel=") == std::string::npos);
+  g_assert_true(bytes(path).find("UserDictionary=") == std::string::npos);
+  const auto localModel =
+      root + "/data/fcitx5/tgskk/zenz-v3.2-small-Q5_K_M.gguf";
+  std::filesystem::create_directories(
+      std::filesystem::path(localModel).parent_path());
+  std::ofstream(localModel) << "newly installed model";
+  g_assert_true(tgskk_ibus::Config::load().model == localModel);
+  config.modelAutomatic = false;
+  config.model = root + "/manual.gguf";
+  config.userDictionaryAutomatic = false;
+  const auto learned = config.userDictionary;
+  config.userDictionary = root + "/manual.user";
+  config.host = " localhost ";
+  tgskk_ibus::Config::save(config);
+  auto manual = tgskk_ibus::Config::load();
+  g_assert_false(manual.modelAutomatic);
+  g_assert_false(manual.userDictionaryAutomatic);
+  g_assert_true(manual.model == config.model);
+  g_assert_true(manual.userDictionary == config.userDictionary);
+  g_assert_cmpstr(manual.host.c_str(), ==, "localhost");
+  config.modelAutomatic = true;
+  config.userDictionaryAutomatic = true;
+  config.userDictionary = learned;
+  config.host = "localhost";
+  tgskk_ibus::Config::save(config);
+  g_assert_true(tgskk_ibus::Config::load().model == localModel);
   const auto original = bytes(path);
   config.port = 70000;
   rejected(config);
   config.port = 1179;
-  config.inlineCandidates = 65;
+  config.inlineCandidates = -1;
   rejected(config);
   config.inlineCandidates = 0;
   config.host = " \t";
   rejected(config);
+  config.server = "Disabled";
+  config.host = std::string("local\0suffix", 12);
+  rejected(config);
+  config.server = "Custom";
   config.host = "localhost";
-  config.dictionary = "relative";
+  config.dictionary = "";
+  rejected(config);
+  config.dictionary = std::string("bad\0path", 8);
   rejected(config);
   config.dictionary = restored.dictionary;
   g_assert_true(bytes(path) == original);
+  std::ofstream(path) << "[General]\nInlineCandidates=100\nDictionary=relative."
+                         "dict\nSkkservMode=Custom\nSkkservHost=\n";
+  const auto legacy = tgskk_ibus::Config::load();
+  g_assert_cmpint(legacy.inlineCandidates, ==, 100);
+  g_assert_cmpstr(legacy.dictionary.c_str(), ==, "relative.dict");
+  g_assert_true(legacy.host.empty());
+  std::ofstream(path) << original;
   const auto child = fork();
   g_assert_cmpint(child, >=, 0);
   if (child == 0) {
@@ -131,7 +173,51 @@ int main(int argc, char **argv) {
   g_assert_true(bytes(path) == saved);
   g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(find(window, "status"))), !=,
                   "");
+  gtk_entry_set_text(GTK_ENTRY(port), "99999999999");
+  gtk_button_clicked(GTK_BUTTON(save));
+  g_assert_true(bytes(path) == saved);
+  g_assert_nonnull(g_strstr_len(
+      gtk_label_get_text(GTK_LABEL(find(window, "status"))), -1, "ポート"));
   g_assert_true(bytes(config.userDictionary) == ";; learned sentinel\n");
+  gtk_widget_destroy(window);
+  std::ofstream(path) << "[General]\nSkkservPort=70000\nSkkservMode="
+                         "Disabled\nZenzEnabled=false\n";
+  const auto invalid = bytes(path);
+  window = tgskk_ibus::createSettingsWindow();
+  g_assert_true(bytes(path) == invalid);
+  g_assert_cmpstr(gtk_entry_get_text(GTK_ENTRY(find(window, "SkkservPort"))),
+                  ==, "70000");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(find(window, "status"))), !=,
+                  "");
+  gtk_entry_set_text(GTK_ENTRY(find(window, "SkkservPort")), "1178");
+  gtk_button_clicked(GTK_BUTTON(find(window, "save")));
+  g_assert_cmpint(tgskk_ibus::Config::load().port, ==, 1178);
+  g_assert_true(tgskk_ibus::Config::load().modelAutomatic);
+  gtk_widget_destroy(window);
+  std::ofstream(path) << "[General]\nSkkservPort=not-an-integer\nSkkservMode="
+                         "Disabled\nZenzEnabled=invalid\n";
+  std::string warning;
+  auto repair = tgskk_ibus::Config::loadForSettings(warning);
+  g_assert_false(warning.empty());
+  g_assert_false(repair.ai);
+  window = tgskk_ibus::createSettingsWindow();
+  gtk_button_clicked(GTK_BUTTON(find(window, "save")));
+  g_assert_false(tgskk_ibus::Config::load().ai);
+  gtk_widget_destroy(window);
+  std::ofstream(path) << "[General]\nDictionaryEncoding=bogus\nSkkservMode="
+                         "Disabled\nZenzEnabled=false\n";
+  const auto invalidEncoding = bytes(path);
+  window = tgskk_ibus::createSettingsWindow();
+  gtk_button_clicked(GTK_BUTTON(find(window, "save")));
+  g_assert_true(bytes(path) == invalidEncoding);
+  g_assert_nonnull(
+      g_strstr_len(gtk_label_get_text(GTK_LABEL(find(window, "status"))), -1,
+                   "辞書の文字コード"));
+  gtk_combo_box_set_active_id(GTK_COMBO_BOX(find(window, "DictionaryEncoding")),
+                              "utf-8");
+  gtk_button_clicked(GTK_BUTTON(find(window, "save")));
+  const auto repairedEncoding = tgskk_ibus::Config::load();
+  g_assert_cmpstr(repairedEncoding.encoding.c_str(), ==, "utf-8");
   gtk_widget_destroy(window);
   std::ofstream(path) << "[malformed";
   const auto malformed = bytes(path);

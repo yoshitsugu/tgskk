@@ -2,6 +2,8 @@
 #include "settings.h"
 #include "config.h"
 #include <array>
+#include <charconv>
+#include <climits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -89,35 +91,46 @@ struct Settings {
   static std::string text(GtkWidget *widget) {
     return gtk_entry_get_text(GTK_ENTRY(widget));
   }
-  static std::string selection(GtkWidget *widget) {
+  static std::string selection(GtkWidget *widget, const char *label) {
     const char *value = gtk_combo_box_get_active_id(GTK_COMBO_BOX(widget));
     if (!value)
-      throw std::runtime_error("選択肢を指定してください。");
+      throw std::runtime_error(std::string(label) +
+                               ": 選択肢を指定してください。");
     return value;
   }
   void save() {
     try {
       auto next = config;
       next.dictionary = text(dictionary);
-      next.encoding = selection(encoding);
+      next.encoding = selection(encoding, "辞書の文字コード");
       next.userDictionary = text(userDictionary);
+      next.userDictionaryAutomatic = next.userDictionary.empty();
       next.model = text(model);
+      next.modelAutomatic = next.model.empty();
       next.ai = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(ai));
       next.indicator =
           gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(indicator));
-      next.server = selection(server);
+      next.server = selection(server, "SKKサーバー");
       next.host = text(host);
-      next.serverEncoding = selection(serverEncoding);
-      for (auto [widget, destination] :
-           std::array<std::pair<GtkWidget *, int *>, 3>{
-               std::pair{port, &next.port},
-               {timeout, &next.timeout},
-               {inlineCandidates, &next.inlineCandidates}}) {
+      next.serverEncoding = selection(serverEncoding, "サーバーの文字コード");
+      struct Number {
+        GtkWidget *widget;
+        int *destination;
+        const char *label;
+      };
+      for (auto [widget, destination, label] : std::array<Number, 3>{
+               Number{port, &next.port, "ポート"},
+               Number{timeout, &next.timeout, "候補を待つ時間"},
+               Number{inlineCandidates, &next.inlineCandidates, "候補数"}}) {
         const auto value = text(widget);
+        const auto parsed = std::from_chars(
+            value.data(), value.data() + value.size(), *destination);
         if (value.empty() ||
-            value.find_first_not_of("0123456789") != std::string::npos)
-          throw std::runtime_error("数値は範囲内の整数で指定してください。");
-        *destination = std::stoi(value);
+            value.find_first_not_of("0123456789") != std::string::npos ||
+            parsed.ec != std::errc{} ||
+            parsed.ptr != value.data() + value.size())
+          throw std::runtime_error(std::string(label) +
+                                   ": 範囲内の整数で指定してください。");
       }
       Config::save(next);
       config = std::move(next);
@@ -133,7 +146,8 @@ struct Settings {
 
 GtkWidget *createSettingsWindow() {
   auto state = std::make_unique<Settings>();
-  state->config = Config::load();
+  std::string warning;
+  state->config = Config::loadForSettings(warning);
   auto *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_title(GTK_WINDOW(window), "tgskk の設定（IBus）");
   gtk_window_set_default_size(GTK_WINDOW(window), 620, 680);
@@ -153,15 +167,24 @@ GtkWidget *createSettingsWindow() {
       state->entry("辞書(_D)", "Dictionary", c.dictionary, true);
   state->encoding = state->combo("辞書の文字コード", "DictionaryEncoding",
                                  "euc-jp", "utf-8", c.encoding);
-  state->userDictionary = state->entry("ユーザー辞書(_U)", "UserDictionary",
-                                       c.userDictionary, true);
-  state->inlineCandidates = state->number(
-      "一覧を出すまでの候補数", "InlineCandidates", c.inlineCandidates, 0, 64);
+  state->userDictionary =
+      state->entry("ユーザー辞書(_U)", "UserDictionary",
+                   c.userDictionaryAutomatic ? "" : c.userDictionary, true);
+  state->inlineCandidates =
+      state->number("一覧を出すまでの候補数", "InlineCandidates",
+                    c.inlineCandidates, 0, INT_MAX);
   state->indicator =
       state->toggle("モード変更時に表示する(_I)", "ModeIndicator", c.indicator);
   state->ai = state->toggle("AIによる候補の並べ替え(_A)", "ZenzEnabled", c.ai);
-  state->model = state->entry("モデル(_M)", "ZenzModel", c.model, true);
-  state->server = state->combo("SKKサーバー(_S)", "SkkservMode", "Google",
+  state->model = state->entry("モデル(_M)", "ZenzModel",
+                              c.modelAutomatic ? "" : c.model, true);
+  gtk_entry_set_placeholder_text(GTK_ENTRY(state->userDictionary),
+                                 c.userDictionary.c_str());
+  gtk_entry_set_placeholder_text(GTK_ENTRY(state->model), c.model.c_str());
+  gtk_widget_set_tooltip_text(state->userDictionary,
+                              "空欄で既定のユーザー辞書を使います。");
+  gtk_widget_set_tooltip_text(state->model, "空欄でモデルを自動検出します。");
+  state->server = state->combo("SKKサーバー(_K)", "SkkservMode", "Google",
                                "Custom", c.server, "Disabled");
   state->host = state->entry("カスタムサーバーのホスト", "SkkservHost", c.host);
   state->port = state->number("ポート", "SkkservPort", c.port, 1, 65535);
@@ -177,6 +200,12 @@ GtkWidget *createSettingsWindow() {
   gtk_box_pack_start(GTK_BOX(box), privacy, FALSE, FALSE, 0);
   state->status = gtk_label_new("");
   gtk_widget_set_name(state->status, "status");
+  if (!warning.empty()) {
+    warning = "設定を確認してください。読み取れない値は既定値で表示します。保存"
+              "するまでファイルは変更しません。\n" +
+              warning;
+    gtk_label_set_text(GTK_LABEL(state->status), warning.c_str());
+  }
   gtk_label_set_line_wrap(GTK_LABEL(state->status), TRUE);
   gtk_label_set_xalign(GTK_LABEL(state->status), 0);
   gtk_box_pack_start(GTK_BOX(box), state->status, FALSE, FALSE, 0);

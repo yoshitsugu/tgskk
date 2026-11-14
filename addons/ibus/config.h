@@ -7,8 +7,12 @@ struct Config {
                                      serverEncoding = "euc-jp";
   int inlineCandidates = 4, port = 1178, timeout = 300;
   bool ai = true, indicator = true;
+  bool userDictionaryAutomatic = true, modelAutomatic = true;
   static Config load();
+  static Config loadForSettings(std::string &warning);
   static void save(const Config &config);
   void validate() const;
+  void validateForSave() const;
+  void normalize();
 };
 } // namespace tgskk_ibus

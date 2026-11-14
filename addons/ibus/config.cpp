@@ -34,27 +34,54 @@ KeyFile readFile() {
 }
 } // namespace
 
+void Config::normalize() {
+  if (server == "Custom") {
+    const auto first = host.find_first_not_of(" \t\r\n");
+    host =
+        first == std::string::npos
+            ? ""
+            : host.substr(first, host.find_last_not_of(" \t\r\n") - first + 1);
+  }
+}
 void Config::validate() const {
-  const auto path = [](const std::string &value) {
-    return !value.empty() && value.front() == '/' &&
-           value.find_first_of("\r\n") == std::string::npos &&
-           value.find('\0') == std::string::npos;
+  if (inlineCandidates < 0)
+    throw std::runtime_error("候補数は0以上の整数で指定してください。");
+  if (port < 1 || port > 65535)
+    throw std::runtime_error("ポートは1〜65535で指定してください。");
+  if (timeout < 0 || timeout > 1000)
+    throw std::runtime_error("候補を待つ時間は0〜1000 msで指定してください。");
+  if (server != "Google" && server != "Custom" && server != "Disabled")
+    throw std::runtime_error(
+        "SKKサーバーはGoogle、Custom、Disabledから選択してください。");
+  if (encoding != "euc-jp" && encoding != "utf-8")
+    throw std::runtime_error(
+        "辞書の文字コードはeuc-jpかutf-8を選択してください。");
+  if (serverEncoding != "euc-jp" && serverEncoding != "utf-8")
+    throw std::runtime_error(
+        "サーバーの文字コードはeuc-jpかutf-8を選択してください。");
+}
+void Config::validateForSave() const {
+  validate();
+  const auto path = [](const std::string &value, const char *label) {
+    if (value.empty() || value.find_first_of("\r\n") != std::string::npos ||
+        value.find('\0') != std::string::npos)
+      throw std::runtime_error(std::string(label) +
+                               ": 空欄、改行、NULを含むパスは指定できません。");
   };
-  if (!path(dictionary) || !path(userDictionary) || !path(model) ||
-      inlineCandidates < 0 || inlineCandidates > 64 || port < 1 ||
-      port > 65535 || timeout < 0 || timeout > 1000 ||
-      (server != "Google" && server != "Custom" && server != "Disabled") ||
-      (server == "Custom" &&
-       host.find_first_not_of(" \t\r\n") == std::string::npos) ||
+  path(dictionary, "辞書");
+  if (!userDictionaryAutomatic)
+    path(userDictionary, "ユーザー辞書");
+  if (!modelAutomatic)
+    path(model, "モデル");
+  if ((server == "Custom" && host.empty()) ||
       host.find_first_of("\r\n") != std::string::npos ||
-      host.find('\0') != std::string::npos ||
-      (encoding != "euc-jp" && encoding != "utf-8") ||
-      (serverEncoding != "euc-jp" && serverEncoding != "utf-8"))
-    throw std::runtime_error("設定値が不正です。絶対パス、文字コード、サーバー"
-                             "と数値の範囲を確認してください。");
+      host.find('\0') != std::string::npos)
+    throw std::runtime_error(
+        "カスタムサーバーのホストを指定してください。改行やNULは使えません。");
 }
 
-Config Config::load() {
+namespace {
+Config readConfig(std::string *warning) {
   Config c;
   c.userDictionary =
       std::string(g_get_user_data_dir()) + "/ibus/tgskk/SKK-JISYO.user";
@@ -62,6 +89,14 @@ Config Config::load() {
   auto owned = readFile();
   auto *file = owned.get();
   GError *error = nullptr;
+  auto fieldError = [&](const char *key) {
+    if (!error)
+      return;
+    if (!warning)
+      check(error);
+    *warning += std::string(key) + ": " + error->message + "\n";
+    g_clear_error(&error);
+  };
   auto string = [&](const char *key, std::string &value) {
     if (!error && g_key_file_has_key(file, "General", key, nullptr)) {
       gchar *text = g_key_file_get_string(file, "General", key, &error);
@@ -69,21 +104,37 @@ Config Config::load() {
         value = text;
         g_free(text);
       }
+      if (error && std::string(key) == "SkkservMode")
+        value = "Disabled";
+      fieldError(key);
     }
   };
   auto integer = [&](const char *key, int &value) {
-    if (!error && g_key_file_has_key(file, "General", key, nullptr))
-      value = g_key_file_get_integer(file, "General", key, &error);
+    if (g_key_file_has_key(file, "General", key, nullptr)) {
+      const auto parsed = g_key_file_get_integer(file, "General", key, &error);
+      if (!error)
+        value = parsed;
+      fieldError(key);
+    }
   };
   auto boolean = [&](const char *key, bool &value) {
-    if (!error && g_key_file_has_key(file, "General", key, nullptr))
+    if (g_key_file_has_key(file, "General", key, nullptr)) {
       value = g_key_file_get_boolean(file, "General", key, &error);
+      fieldError(key);
+    }
   };
   string("Dictionary", c.dictionary);
   // GLib reserves "Encoding" in the first group for the file encoding.
   string("DictionaryEncoding", c.encoding);
-  string("UserDictionary", c.userDictionary);
-  string("ZenzModel", c.model);
+  std::string userOverride, modelOverride;
+  string("UserDictionary", userOverride);
+  string("ZenzModel", modelOverride);
+  c.userDictionaryAutomatic = userOverride.empty();
+  c.modelAutomatic = modelOverride.empty();
+  if (!c.userDictionaryAutomatic)
+    c.userDictionary = userOverride;
+  if (!c.modelAutomatic)
+    c.model = modelOverride;
   string("SkkservMode", c.server);
   string("SkkservHost", c.host);
   string("SkkservEncoding", c.serverEncoding);
@@ -93,27 +144,51 @@ Config Config::load() {
   boolean("ZenzEnabled", c.ai);
   boolean("ModeIndicator", c.indicator);
   check(error);
-  if (!g_key_file_has_key(file, "General", "ZenzModel", nullptr)) {
+  if (c.modelAutomatic) {
     const auto model = std::filesystem::path(g_get_user_data_dir()) /
                        "fcitx5/tgskk/zenz-v3.2-small-Q5_K_M.gguf";
     std::error_code status;
     if (std::filesystem::is_regular_file(model, status))
       c.model = model.string();
   }
-  c.validate();
+  c.normalize();
   return c;
 }
+} // namespace
+Config Config::load() {
+  auto config = readConfig(nullptr);
+  config.validate();
+  return config;
+}
+Config Config::loadForSettings(std::string &warning) {
+  warning.clear();
+  auto config = readConfig(&warning);
+  try {
+    config.validateForSave();
+  } catch (const std::exception &error) {
+    warning += error.what();
+  }
+  return config;
+}
 
-void Config::save(const Config &c) {
-  c.validate();
+void Config::save(const Config &value) {
+  auto c = value;
+  c.normalize();
+  c.validateForSave();
   auto file = readFile();
   const auto string = [&](const char *key, const std::string &value) {
     g_key_file_set_string(file.get(), "General", key, value.c_str());
   };
   string("Dictionary", c.dictionary);
   string("DictionaryEncoding", c.encoding);
-  string("UserDictionary", c.userDictionary);
-  string("ZenzModel", c.model);
+  if (c.userDictionaryAutomatic)
+    g_key_file_remove_key(file.get(), "General", "UserDictionary", nullptr);
+  else
+    string("UserDictionary", c.userDictionary);
+  if (c.modelAutomatic)
+    g_key_file_remove_key(file.get(), "General", "ZenzModel", nullptr);
+  else
+    string("ZenzModel", c.model);
   string("SkkservMode", c.server);
   string("SkkservHost", c.host);
   string("SkkservEncoding", c.serverEncoding);
