@@ -79,6 +79,13 @@ bash scripts/check-fcitx5.sh
 Rustの静的検査は`bash scripts/lint.sh`、依存監査は`cargo install cargo-deny --version 0.18.9 --locked`の後に`bash scripts/check-dependencies.sh`で実行できます。
 CIの静的検査にはRust 1.99.1を使用し、ビルドの最低対応版は1.88のままです。
 
+C/C++の整形と静的解析にはclang-format / clang-tidy 23.1.4を使います。
+`python3 scripts/lint-cpp.py format`で整形を検査し、`--fix`を付けると整形できます。
+静的解析はCMakeの構成時に`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`を指定してから、
+`python3 scripts/lint-cpp.py tidy build/ibus build/fcitx5 build/zenz`で実行します。
+WindowsではVisual Studioの開発者シェルでNinjaを使って構成し、Windows用のビルドディレクトリを渡してください。
+`C++ quality`ワークフローがLinuxとWindowsのコード・テストを解析します。外部依存コードは対象外です。
+
 実モデルを用意した環境では`bash scripts/check-zenz.sh`で結合テストと採点・入力処理の測定を実行できます。
 
 - [速度回帰検査](benchmarks/README.md)

@@ -1,0 +1,71 @@
+name: C++ quality
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cpp-quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install clang-format==23.1.4
+      - run: python scripts/lint-cpp.py format
+      - run: python -m unittest discover -s scripts/tests -p test_lint_cpp.py
+  tidy:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install analysis tools
+        run: python -m pip install clang-tidy==23.1.4 ninja==1.11.1.4
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev pkg-config libfcitx5core-dev libibus-1.0-dev libgtk-3-dev
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Build FFI and helper
+        run: |
+          cargo +1.88.0 build -p tgskk-ffi --locked
+          cargo +1.88.0 build --manifest-path third_party/gskkserv/Cargo.toml --target-dir target --locked
+      - name: Prepare worker headers without model weights
+        run: python scripts/setup-zenz.py --prepare-only --no-model
+      - name: Configure and analyze Linux C++
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S addons/ibus -B build/cpp-ibus -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DTGSKK_RUST_LIBRARY="$PWD/target/debug/libtgskk_ffi.a"
+          cmake -S addons/fcitx5 -B build/cpp-fcitx5 -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DTGSKK_RUST_LIBRARY="$PWD/target/debug/libtgskk_ffi.a" -DTGSKK_GOOGLE_SKKSERV_BINARY="$PWD/target/debug/gskkserv"
+          cmake -S native/zenz -B build/cpp-zenz -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DTGSKK_LLAMA_SOURCE="$PWD/build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478"
+          python scripts/lint-cpp.py tidy build/cpp-ibus build/cpp-fcitx5 build/cpp-zenz
+      - name: Configure and analyze Windows C++ with the Windows SDK
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          cmake -S addons/windows -B build/cpp-windows -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DTGSKK_RUST_LIBRARY="%CD%/target/debug/tgskk_ffi.lib"
+          if errorlevel 1 exit /b 1
+          cmake -S native/zenz -B build/cpp-zenz -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DTGSKK_LLAMA_SOURCE="%CD%/build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478"
+          if errorlevel 1 exit /b 1
+          python scripts/lint-cpp.py tidy build/cpp-windows build/cpp-zenz
