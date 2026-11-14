@@ -11,6 +11,8 @@ concurrency:
 jobs:
   quality:
     uses: ./.github/workflows/rust-quality.yml
+    with:
+      baseline-ref: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
   package:
     runs-on: ubuntu-latest
     timeout-minutes: 45

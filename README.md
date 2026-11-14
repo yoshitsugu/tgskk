@@ -81,6 +81,7 @@ CIの静的検査にはRust 1.99.1を使用し、ビルドの最低対応版は1
 
 実モデルを用意した環境では`bash scripts/check-zenz.sh`で結合テストと採点・入力処理の測定を実行できます。
 
+- [速度回帰検査](benchmarks/README.md)
 - [設計](docs/architecture.md)
 - [CSKKの取り込み情報](third_party/cskk/UPSTREAM.md)
 

@@ -1,6 +1,10 @@
 name: Rust quality
 on:
   workflow_call:
+    inputs:
+      baseline-ref:
+        type: string
+        default: HEAD^
   workflow_dispatch:
   schedule:
     - cron: '23 3 * * 1'
@@ -43,3 +47,56 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: 1.99.1
         run: bash scripts/check-dependencies.sh
+
+  performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve performance baseline
+        id: baseline
+        shell: bash
+        env:
+          BASELINE_REF: ${{ inputs.baseline-ref || 'HEAD^' }}
+        run: |
+          if [[ "$BASELINE_REF" =~ ^0+$ ]]; then BASELINE_REF=HEAD^; fi
+          echo "sha=$(git rev-parse --verify --end-of-options "$BASELINE_REF^{commit}")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.baseline.outputs.sha }}
+          path: build/performance/reference
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev pkg-config cmake g++
+          rustup toolchain install 1.88.0 --profile minimal
+      - name: Test performance analysis
+        run: python3 -m unittest discover -s scripts/tests
+      - name: Build matching release benchmarks and AI workers
+        run: bash scripts/build-performance.sh build/performance/reference
+      - name: Compare paired input and real-model scoring latencies
+        env:
+          BASELINE_SHA: ${{ steps.baseline.outputs.sha }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          python3 scripts/check-performance.py \
+            --baseline-input build/performance/baseline/input \
+            --candidate-input build/performance/candidate/input \
+            --baseline-worker build/performance/reference/build/zenz/tgskk-zenz-worker \
+            --candidate-worker build/zenz/tgskk-zenz-worker \
+            --model build/models/zenz-v3.2-small-Q5_K_M.gguf \
+            --baseline-revision "$BASELINE_SHA" --candidate-revision "$CANDIDATE_SHA" \
+            --output build/performance/comparison.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: performance-comparison
+          path: build/performance/comparison.json
+          if-no-files-found: warn
+          retention-days: 14
