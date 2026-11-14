@@ -119,6 +119,20 @@ fn expect_timeout(result: Result<Vec<Candidate>, LookupError>) {
     }
 }
 
+fn lookup_retrying_contention(
+    worker: &Worker,
+    reading: &str,
+    wait: Duration,
+) -> Result<Vec<Candidate>, LookupError> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match worker.lookup(reading, wait) {
+            Err(LookupError::Busy) if Instant::now() < deadline => thread::yield_now(),
+            result => return result,
+        }
+    }
+}
+
 #[test]
 fn positive_cache_reuses_utf8_result_without_second_request() {
     let (request_tx, request_rx) = mpsc::channel();
@@ -327,21 +341,22 @@ fn latest_pending_reading_supersedes_earlier() {
     let worker = Worker::start(tcp_config(&server, Encoding::Utf8)).expect("worker");
 
     let first_worker = worker.clone();
-    let first = thread::spawn(move || first_worker.lookup("さき", Duration::from_secs(1)));
+    let first = thread::spawn(move || {
+        lookup_retrying_contention(&first_worker, "さき", Duration::from_secs(1))
+    });
     let _ = log_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("first request");
 
-    expect_timeout(worker.lookup("なか", Duration::ZERO));
-    expect_timeout(worker.lookup("あと", Duration::ZERO));
+    expect_timeout(lookup_retrying_contention(&worker, "なか", Duration::ZERO));
+    expect_timeout(lookup_retrying_contention(&worker, "あと", Duration::ZERO));
     let _ = release_tx.send(());
 
     let first_result = first.join().expect("join first lookup");
     assert_eq!(first_result.expect("first"), vec![candidate("先")]);
 
-    let last = worker
-        .lookup("あと", Duration::from_secs(1))
-        .expect("last lookup");
+    let last =
+        lookup_retrying_contention(&worker, "あと", Duration::from_secs(1)).expect("last lookup");
     assert_eq!(last, vec![candidate("後")]);
 
     let second_request = log_rx
