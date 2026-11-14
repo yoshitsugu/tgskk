@@ -6,6 +6,7 @@
 #include <map>
 #include <sddl.h>
 #include <shlobj.h>
+#include <sstream>
 #include <stdexcept>
 #include <system_error>
 
@@ -291,8 +292,8 @@ std::wstring homeDirectory() {
   CoTaskMemFree(path);
   return canonicalPath(home);
 }
-Config Config::load(const std::wstring &directory,
-                    const std::wstring &program) {
+static Config parseConfig(const std::wstring &directory,
+                          const std::wstring &program, std::istream &input) {
   Config c;
   c.home = canonicalPath(directory);
   c.broker = canonicalPath(program);
@@ -305,16 +306,16 @@ Config Config::load(const std::wstring &directory,
   c.model = (std::filesystem::path(c.home) / L"models" /
              L"zenz-v3.2-small-Q5_K_M.gguf")
                 .wstring();
+  const auto sharedModel = sibling / L"models" / L"zenz-v3.2-small-Q5_K_M.gguf";
+  if (!std::filesystem::is_regular_file(c.model) &&
+      std::filesystem::is_regular_file(sharedModel))
+    c.model = sharedModel.wstring();
   wchar_t dictionary[32768];
   const auto n =
       GetEnvironmentVariableW(L"TGSKK_DICTIONARY", dictionary, 32768);
   require(n < 32768, "Dictionary path length");
   if (n)
     c.dictionary = canonicalPath(dictionary);
-  const auto ini = std::filesystem::path(c.home) / L"windows.ini";
-  std::ifstream input(ini, std::ios::binary);
-  if (!input && std::filesystem::exists(ini))
-    throw std::runtime_error("Cannot read windows.ini");
   std::string line, configuration;
   auto trim = [](std::string value) {
     const auto first = value.find_first_not_of(" \t\r\n");
@@ -367,7 +368,13 @@ Config Config::load(const std::wstring &directory,
       c.host = value;
     else if (key == "ServerEncoding")
       c.serverEncoding = value;
-    else if (key == "Port") {
+    else if (key == "InlineCandidates") {
+      size_t used = 0;
+      const auto count = std::stoul(value, &used);
+      if (count > 64 || used != value.size())
+        throw std::runtime_error("InlineCandidates must be 0..64");
+      c.inlineCandidates = static_cast<uint32_t>(count);
+    } else if (key == "Port") {
       size_t used = 0;
       unsigned long port = std::stoul(value, &used);
       if (!port || port > 65535 || used != value.size())
@@ -385,6 +392,72 @@ Config Config::load(const std::wstring &directory,
   c.fingerprint = hash(configuration + utf8(c.dictionary) + utf8(c.worker) +
                        utf8(c.model) + utf8(c.helper) + utf8(c.userDictionary));
   return c;
+}
+Config Config::load(const std::wstring &directory,
+                    const std::wstring &program) {
+  const auto ini = std::filesystem::path(directory) / L"windows.ini";
+  std::ifstream input(ini, std::ios::binary);
+  if (!input && std::filesystem::exists(ini))
+    throw std::runtime_error("Cannot read windows.ini");
+  return parseConfig(directory, program, input);
+}
+void Config::save(const Config &config) {
+  std::ostringstream text;
+  text << "[General]\n";
+  const auto field = [&](const char *key, const std::string &value) {
+    if (value.find_first_of("\r\n") != std::string::npos ||
+        value.find('\0') != std::string::npos)
+      throw std::runtime_error(
+          "Configuration values cannot contain newlines or NULs");
+    text << key << '=' << value << '\n';
+  };
+  const std::pair<const char *, std::wstring> paths[] = {
+      {"Dictionary", config.dictionary},
+      {"UserDictionary", config.userDictionary},
+      {"Worker", config.worker},
+      {"Model", config.model},
+      {"GoogleHelper", config.helper}};
+  for (const auto &entry : paths) {
+    if (entry.second.empty())
+      throw std::runtime_error("A file path cannot be empty");
+    field(entry.first, utf8(entry.second));
+  }
+  field("Encoding", config.encoding);
+  field("AI", config.ai ? "true" : "false");
+  field("Skkserv", config.server);
+  field("Host", config.host);
+  field("Port", std::to_string(config.port));
+  field("ServerEncoding", config.serverEncoding);
+  field("InlineCandidates", std::to_string(config.inlineCandidates));
+  if (config.server == "Custom" && config.host.empty())
+    throw std::runtime_error("Custom server host is empty");
+  const auto bytes = text.str();
+  std::istringstream validation(bytes);
+  (void)parseConfig(config.home, config.broker, validation);
+  const auto directory = std::filesystem::path(config.home);
+  std::filesystem::create_directories(directory);
+  const auto temporary =
+      directory / (L"windows.ini." + std::to_wstring(randomId()) + L".tmp");
+  try {
+    {
+      Handle output(CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
+                                CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
+      require(bool(output), "Create temporary settings");
+      DWORD written = 0;
+      require(WriteFile(output.value, bytes.data(),
+                        static_cast<DWORD>(bytes.size()), &written, nullptr) &&
+                  written == bytes.size(),
+              "Write settings");
+      require(FlushFileBuffers(output.value), "Flush settings");
+    }
+    require(MoveFileExW(temporary.c_str(), (directory / L"windows.ini").c_str(),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH),
+            "Replace settings");
+  } catch (...) {
+    std::error_code ignored;
+    std::filesystem::remove(temporary, ignored);
+    throw;
+  }
 }
 static std::wstring quote(const std::wstring &value) {
   std::wstring out = L"\"";

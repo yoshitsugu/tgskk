@@ -361,7 +361,7 @@ class Service final : public ITfTextInputProcessorEx,
     }
     return session->key(symbol, modifiers);
   }
-  static constexpr size_t inlineCandidates = tgskk::defaultInlineCandidates;
+  size_t inlineCandidates = tgskk::defaultInlineCandidates;
   static constexpr size_t pageSize = tgskk::candidatePageSize;
   bool disabled(ITfContext *context) {
     ITfCompartmentMgr *compartments = nullptr;
@@ -517,6 +517,7 @@ public:
                               .wstring();
       const auto config =
           tgskk::windows::Config::load(tgskk::windows::homeDirectory(), broker);
+      inlineCandidates = config.inlineCandidates;
       session =
           std::make_unique<tgskk::windows::Input>(config, module, &objects);
       ++inputEpoch;

@@ -75,9 +75,11 @@ struct Config {
   std::string encoding = "euc-jp", server = "Google", host = "127.0.0.1",
               serverEncoding = "euc-jp";
   uint16_t port = 1178;
+  uint32_t inlineCandidates = 4;
   bool ai = true;
   uint64_t fingerprint = 0;
   static Config load(const std::wstring &home, const std::wstring &broker);
+  static void save(const Config &);
 };
 bool launchBroker(const Config &);
 } // namespace tgskk::windows

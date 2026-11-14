@@ -370,8 +370,8 @@ public:
       reply.generation = session.generation;
       reply.count = static_cast<uint32_t>(view->candidate_count);
       reply.selected = static_cast<uint32_t>(view->selected);
-      reply.start =
-          static_cast<uint32_t>(tgskk::candidatePageStart(reply.selected, 4));
+      reply.start = static_cast<uint32_t>(
+          tgskk::candidatePageStart(reply.selected, config.inlineCandidates));
       reply.mode = modeFromLabel(view->mode_label);
       reply.preedit = view->preedit;
       reply.label = view->mode_label;
