@@ -106,14 +106,12 @@ def stage(args: argparse.Namespace) -> None:
 
         if args.model.is_symlink():
             raise ValueError(f"{args.model}: symlinks are not allowed")
-        model_hash = shasum(args.model)
-        if model_hash != zenz_model.MODEL_SHA:
-            raise ValueError(
-                f"{args.model}: SHA256 mismatch (expected {zenz_model.MODEL_SHA}, got {model_hash})"
-            )
         model_dst = payload / "models"
         model_dst.mkdir()
         copy_file(args.model, model_dst / zenz_model.MODEL_NAME)
+        model_hash = shasum(model_dst / zenz_model.MODEL_NAME)
+        if model_hash != zenz_model.MODEL_SHA:
+            raise ValueError(f"Staged model SHA256 mismatch (expected {zenz_model.MODEL_SHA}, got {model_hash})")
 
         licenses = payload / "licenses"
         licenses.mkdir()
