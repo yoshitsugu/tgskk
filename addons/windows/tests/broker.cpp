@@ -561,6 +561,15 @@ void asciiPassthrough(Input &input) {
   input.key('/', 0);
   require(input.mayProcess('a', 0), "abbrev key passed through");
   input.reset();
+  input.key('K', TGSKK_MOD_SHIFT);
+  static const char *labels[] = {"あ", "ア", "ｱ", "Ａ", "A"};
+  for (uint8_t mode = 0; mode < 5; ++mode) {
+    const auto *view = input.setMode(mode);
+    require(view && std::string(view->mode_label) == labels[mode] &&
+                !*view->preedit && !*view->committed,
+            "explicit mode change lost state or committed pending input");
+  }
+  require(input.setMode(0) != nullptr, "restore hiragana mode");
 }
 void adapterCases(const std::wstring &program, const std::wstring &dictionary) {
   Directory directory;

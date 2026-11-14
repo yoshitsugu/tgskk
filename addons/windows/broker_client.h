@@ -57,6 +57,7 @@ public:
   const TgskkView *choose(size_t index);
   const TgskkView *select(size_t index);
   const TgskkView *reset();
+  const TgskkView *setMode(uint8_t mode);
   bool mayProcess(uint32_t symbol, uint32_t modifiers);
   const char *candidate(size_t index, bool annotation = false);
   void context(std::string text, bool ai, bool network);

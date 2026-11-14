@@ -26,3 +26,48 @@ struct ITfTextInputProcessorEx : ITfTextInputProcessor {
 #ifndef TF_IPPMF_FORPROCESS
 #define TF_IPPMF_FORPROCESS 0x10000000
 #endif
+
+#include <ctfutb.h>
+#include <ocidl.h>
+#include <olectl.h>
+#ifndef __MINGW32__
+#include <ctffunc.h>
+#endif
+// MinGW omits these interfaces. Method order follows the Windows SDK ABI.
+#ifndef __ITfMenu_INTERFACE_DEFINED__
+#define __ITfMenu_INTERFACE_DEFINED__
+struct ITfMenu : IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE AddMenuItem(UINT, DWORD, HBITMAP, HBITMAP,
+                                                const WCHAR *, ULONG,
+                                                ITfMenu **) = 0;
+};
+#endif
+#ifndef __ITfLangBarItemButton_INTERFACE_DEFINED__
+#define __ITfLangBarItemButton_INTERFACE_DEFINED__
+enum TfLBIClick { TF_LBI_CLK_RIGHT = 1, TF_LBI_CLK_LEFT = 2 };
+inline const IID IID_ITfLangBarItemButton = {
+    0x28c7f1d0,
+    0xde25,
+    0x11d2,
+    {0xaf, 0xdd, 0x00, 0x10, 0x5a, 0x27, 0x99, 0xb5}};
+struct ITfLangBarItemButton : ITfLangBarItem {
+  virtual HRESULT STDMETHODCALLTYPE OnClick(TfLBIClick, POINT,
+                                            const RECT *) = 0;
+  virtual HRESULT STDMETHODCALLTYPE InitMenu(ITfMenu *) = 0;
+  virtual HRESULT STDMETHODCALLTYPE OnMenuSelect(UINT) = 0;
+  virtual HRESULT STDMETHODCALLTYPE GetIcon(HICON *) = 0;
+  virtual HRESULT STDMETHODCALLTYPE GetText(BSTR *) = 0;
+};
+#endif
+#ifndef TF_LBI_STYLE_BTN_MENU
+#define TF_LBI_STYLE_HIDDENSTATUSCONTROL 0x00000001
+#define TF_LBI_STYLE_BTN_MENU 0x00020000
+#define TF_LBI_STYLE_SHOWNINTRAY 0x00000002
+#define TF_LBI_STATUS_HIDDEN 0x00000001
+#define TF_LBI_STATUS_DISABLED 0x00000002
+#define TF_LBI_ICON 0x00000001
+#define TF_LBI_TEXT 0x00000002
+#define TF_LBI_TOOLTIP 0x00000004
+#define TF_LBI_STATUS 0x00010000
+#define TF_LBMENUF_CHECKED 0x00000001
+#endif

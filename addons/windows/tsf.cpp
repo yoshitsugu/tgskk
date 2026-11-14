@@ -2,6 +2,7 @@
 #include "../common/candidates.h"
 #include "broker_client.h"
 #include "input_scope.h"
+#include "ime_controls.h"
 #include "tgskk.h"
 #include "tsf_compat.h"
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <msctf.h>
 #include <new>
 #include <shlobj.h>
+#include <shellapi.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -217,7 +219,10 @@ class Service final : public ITfTextInputProcessorEx,
                       public ITfCompositionSink,
                       public ITfThreadMgrEventSink,
                       public ITfTextEditSink,
-                      public ITfThreadFocusSink {
+                      public ITfThreadFocusSink,
+                      public ITfCompartmentEventSink,
+                      public ITfLangBarItemButton,
+                      public ITfSource {
   std::atomic<ULONG> refs{1};
   ITfThreadMgr *manager = nullptr;
   TfClientId client = TF_CLIENTID_NULL;
@@ -314,6 +319,242 @@ class Service final : public ITfTextInputProcessorEx,
     current->Release();
     return result;
   }
+  bool open = true, synchronizingControls = false, controlsDirty = false;
+  ITfCompartment *openCompartment = nullptr, *conversionCompartment = nullptr;
+  DWORD openCookie = TF_INVALID_COOKIE, conversionCookie = TF_INVALID_COOKIE;
+  ITfLangBarItemMgr *barManager = nullptr;
+  ITfLangBarItemSink *barSink = nullptr;
+  bool barAdded = false, barShown = true, controlsPending = false;
+  uint32_t preservedKeys = 0;
+  bool currentMode(uint8_t &mode) {
+    const auto *view = session ? session->view() : nullptr;
+    if (!view) {
+      reportFailure("read input mode", E_FAIL);
+      return false;
+    }
+    mode = tgskk::windows::modeFromLabel(view->mode_label);
+    return true;
+  }
+  HRESULT writeMode(uint8_t mode) {
+    DWORD flags = 0;
+    const auto result = readControl(conversionCompartment, flags);
+    return FAILED(result) ? result
+                          : writeControl(conversionCompartment,
+                                         conversionFlags(mode, flags));
+  }
+  static HRESULT readControl(ITfCompartment *compartment, DWORD &value) {
+    VARIANT data;
+    VariantInit(&data);
+    if (!compartment)
+      return TF_E_DISCONNECTED;
+    // TSF callbacks may deactivate the service and release its member
+    // references.
+    compartment->AddRef();
+    HRESULT result = compartment->GetValue(&data);
+    compartment->Release();
+    if (SUCCEEDED(result) && data.vt == VT_I4)
+      value = static_cast<DWORD>(data.lVal);
+    else if (SUCCEEDED(result) && data.vt != VT_EMPTY)
+      result = E_INVALIDARG;
+    VariantClear(&data);
+    return result;
+  }
+  HRESULT writeControl(ITfCompartment *compartment, DWORD value) {
+    if (!compartment || client == TF_CLIENTID_NULL)
+      return TF_E_DISCONNECTED;
+    VARIANT data;
+    VariantInit(&data);
+    data.vt = VT_I4;
+    data.lVal = static_cast<LONG>(value);
+    // Keep the compartment alive across reentrant OnChange notifications.
+    compartment->AddRef();
+    const auto result = compartment->SetValue(client, &data);
+    compartment->Release();
+    return result;
+  }
+  void updateBar() {
+    if (barSink) {
+      auto *sink = barSink;
+      // OnUpdate can reenter Deactivate and clear barSink.
+      sink->AddRef();
+      const auto result = sink->OnUpdate(TF_LBI_ICON | TF_LBI_TEXT |
+                                         TF_LBI_TOOLTIP | TF_LBI_STATUS);
+      if (FAILED(result))
+        reportFailure("update language bar", result);
+      sink->Release();
+    }
+  }
+  HRESULT synchronizeControls() {
+    if (!session || !openCompartment || !conversionCompartment)
+      return TF_E_DISCONNECTED;
+    if (synchronizingControls) {
+      controlsDirty = true;
+      return S_OK;
+    }
+    auto epoch = inputEpoch;
+    const auto current = [&] {
+      return manager && session && inputEpoch == epoch;
+    };
+    synchronizingControls = true;
+    struct ResetFlag {
+      bool &flag;
+      ~ResetFlag() { flag = false; }
+    } guard{synchronizingControls};
+    for (unsigned attempt = 0; attempt < 4; ++attempt) {
+      controlsDirty = false;
+      uint8_t oldMode = 0;
+      if (!currentMode(oldMode))
+        return E_FAIL;
+      DWORD nextOpen = open, flags = conversionFlags(oldMode);
+      HRESULT result = readControl(openCompartment, nextOpen);
+      if (!current())
+        return TF_E_DISCONNECTED;
+      if (SUCCEEDED(result))
+        result = readControl(conversionCompartment, flags);
+      if (!current())
+        return TF_E_DISCONNECTED;
+      if (FAILED(result))
+        return reportFailure("read IME controls", result);
+      const auto mode = modeFromFlags(flags, oldMode);
+      const bool closing = open && !nextOpen;
+      open = nextOpen != 0;
+      if (closing || mode != oldMode || controlsPending) {
+        ++inputEpoch;
+        epoch = inputEpoch;
+        controlsPending = true;
+        if (!abandon()) {
+          updateBar();
+          return E_PENDING;
+        }
+        if (!current())
+          return TF_E_DISCONNECTED;
+        uint8_t resetMode = 0;
+        if (!currentMode(resetMode))
+          return E_FAIL;
+        if (mode != resetMode && !session->setMode(mode)) {
+          const auto restored = writeMode(oldMode);
+          if (FAILED(restored))
+            reportFailure("restore IME mode", restored);
+          updateBar();
+          return reportFailure("change IME mode", E_FAIL);
+        }
+      }
+      controlsPending = false;
+      updateBar();
+      if (!current())
+        return TF_E_DISCONNECTED;
+      if (!controlsDirty)
+        return S_OK;
+    }
+    return reportFailure("unstable IME controls", E_UNEXPECTED);
+  }
+  HRESULT publishMode() {
+    if (!session || !conversionCompartment)
+      return TF_E_DISCONNECTED;
+    uint8_t mode = 0;
+    return currentMode(mode) ? writeMode(mode) : E_FAIL;
+  }
+  HRESULT initControls() {
+    open = true;
+    controlsPending = controlsDirty = false;
+    ITfKeystrokeMgr *keys = nullptr;
+    HRESULT keyResult = manager->QueryInterface(
+        IID_ITfKeystrokeMgr, reinterpret_cast<void **>(&keys));
+    if (SUCCEEDED(keyResult)) {
+      for (size_t i = 0; i < std::size(imeKeys); ++i) {
+        const auto &entry = imeKeys[i];
+        const auto result =
+            keys->PreserveKey(client, *entry.id, &entry.key, L"tgskk IME", 9);
+        if (SUCCEEDED(result))
+          preservedKeys |= 1U << i;
+        else
+          reportFailure("preserve IME key", result);
+      }
+    } else
+      reportFailure("query IME keys", keyResult);
+    release(keys);
+    ITfCompartmentMgr *compartments = nullptr;
+    HRESULT result = manager->QueryInterface(
+        IID_ITfCompartmentMgr, reinterpret_cast<void **>(&compartments));
+    if (SUCCEEDED(result))
+      result = compartments->GetCompartment(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE,
+                                            &openCompartment);
+    if (SUCCEEDED(result))
+      result = compartments->GetCompartment(conversionCompartmentId,
+                                            &conversionCompartment);
+    release(compartments);
+    if (FAILED(result))
+      return result;
+    for (auto entry : {std::pair{openCompartment, &openCookie},
+                       std::pair{conversionCompartment, &conversionCookie}}) {
+      ITfSource *source = nullptr;
+      result = entry.first->QueryInterface(IID_ITfSource,
+                                           reinterpret_cast<void **>(&source));
+      if (SUCCEEDED(result))
+        result = source->AdviseSink(
+            IID_ITfCompartmentEventSink,
+            static_cast<ITfCompartmentEventSink *>(this), entry.second);
+      release(source);
+      if (FAILED(result))
+        return result;
+    }
+    result = synchronizeControls();
+    if (FAILED(result))
+      return result;
+    result = manager->QueryInterface(IID_ITfLangBarItemMgr,
+                                     reinterpret_cast<void **>(&barManager));
+    if (SUCCEEDED(result)) {
+      result = barManager->AddItem(static_cast<ITfLangBarItemButton *>(this));
+      barAdded = SUCCEEDED(result);
+    }
+    if (FAILED(result)) {
+      reportFailure("add language bar", result);
+      release(barManager);
+    }
+    return S_OK;
+  }
+  void uninitControls() {
+    ITfKeystrokeMgr *keys = nullptr;
+    if (manager && preservedKeys &&
+        SUCCEEDED(manager->QueryInterface(IID_ITfKeystrokeMgr,
+                                          reinterpret_cast<void **>(&keys)))) {
+      for (size_t i = 0; i < std::size(imeKeys); ++i) {
+        if (!(preservedKeys & (1U << i)))
+          continue;
+        const auto result =
+            keys->UnpreserveKey(*imeKeys[i].id, &imeKeys[i].key);
+        if (FAILED(result))
+          reportFailure("unpreserve IME key", result);
+      }
+    }
+    preservedKeys = 0;
+    release(keys);
+    if (barAdded && barManager) {
+      const auto result =
+          barManager->RemoveItem(static_cast<ITfLangBarItemButton *>(this));
+      if (FAILED(result))
+        reportFailure("remove language bar", result);
+    }
+    barAdded = false;
+    release(barSink);
+    release(barManager);
+    for (auto entry : {std::pair{openCompartment, &openCookie},
+                       std::pair{conversionCompartment, &conversionCookie}}) {
+      if (entry.first && *entry.second != TF_INVALID_COOKIE) {
+        ITfSource *source = nullptr;
+        if (SUCCEEDED(entry.first->QueryInterface(
+                IID_ITfSource, reinterpret_cast<void **>(&source)))) {
+          const auto result = source->UnadviseSink(*entry.second);
+          if (FAILED(result))
+            reportFailure("unadvise IME control", result);
+          source->Release();
+        }
+      }
+      *entry.second = TF_INVALID_COOKIE;
+    }
+    release(openCompartment);
+    release(conversionCompartment);
+  }
   bool eligible(uint32_t symbol, uint32_t modifiers) const {
     return composition || (session && session->mayProcess(symbol, modifiers));
   }
@@ -323,10 +564,18 @@ class Service final : public ITfTextInputProcessorEx,
            key == VK_NUMLOCK || key == VK_SCROLL ||
            (key >= VK_LSHIFT && key <= VK_RMENU);
   }
-  bool editing = false;
+  bool editing = false, deactivating = false;
   void clearCore() {
-    if (session)
-      session->reset();
+    if (session) {
+      const auto *view = session->reset();
+      // An OS mode change owns the target mode while composition is reset.
+      if (view && view->mode_changed && conversionCompartment &&
+          !synchronizingControls) {
+        const auto result = publishMode();
+        if (FAILED(result))
+          reportFailure("publish reset mode", result);
+      }
+    }
     hideCandidates();
   }
   void hideCandidates() {
@@ -335,7 +584,9 @@ class Service final : public ITfTextInputProcessorEx,
   }
   const TgskkView *keyView(uint32_t symbol, uint32_t modifiers) {
     const auto *view = session->view();
-    if (!view || !view->selecting || !view->candidate_count || modifiers)
+    if (!view)
+      return nullptr;
+    if (!view->selecting || !view->candidate_count || modifiers)
       return session->key(symbol, modifiers);
     const size_t count = view->candidate_count;
     const size_t selected = view->selected;
@@ -485,6 +736,12 @@ public:
       *out = static_cast<ITfThreadFocusSink *>(this);
     else if (iid == IID_ITfTextEditSink)
       *out = static_cast<ITfTextEditSink *>(this);
+    else if (iid == IID_ITfCompartmentEventSink)
+      *out = static_cast<ITfCompartmentEventSink *>(this);
+    else if (iid == IID_ITfLangBarItem || iid == IID_ITfLangBarItemButton)
+      *out = static_cast<ITfLangBarItemButton *>(this);
+    else if (iid == IID_ITfSource)
+      *out = static_cast<ITfSource *>(this);
     else if (iid == IID_ITfThreadMgrEventSink)
       *out = static_cast<ITfThreadMgrEventSink *>(this);
     if (!*out)
@@ -509,7 +766,7 @@ public:
                                        DWORD flags) override {
     if (!value || id == TF_CLIENTID_NULL)
       return E_INVALIDARG;
-    if (manager)
+    if (manager || deactivating)
       return E_UNEXPECTED;
     if (flags & (TF_TMAE_SECUREMODE | TF_TMAE_UIELEMENTENABLEDONLY))
       return E_ACCESSDENIED;
@@ -564,6 +821,11 @@ public:
         Deactivate();
         return FAILED(error) ? error : E_FAIL;
       }
+      result = initControls();
+      if (FAILED(result)) {
+        Deactivate();
+        return result;
+      }
       return S_OK;
     } catch (const std::exception &error) {
       reportCoreFailure("activate input", error.what());
@@ -575,8 +837,16 @@ public:
     }
   }
   HRESULT STDMETHODCALLTYPE Deactivate() override {
+    if (deactivating)
+      return S_OK;
+    deactivating = true;
+    struct ResetDeactivation {
+      bool &value;
+      ~ResetDeactivation() { value = false; }
+    } guard{deactivating};
     traceCount("deactivate entered", refs.load(), "references");
     bool ended = abandon();
+    uninitControls();
     unwatch();
     traceCount("after context unwatch", refs.load(), "references");
     if (ended)
@@ -625,7 +895,11 @@ public:
     if (!eaten)
       return E_POINTER;
     *eaten = FALSE;
-    if (modifier(key))
+    if (controlsPending && composition) {
+      *eaten = TRUE;
+      return S_OK;
+    }
+    if (!open || modifier(key))
       return S_OK;
     uint32_t symbol, modifiers;
     if (composition && session && !disabled(context)) {
@@ -642,7 +916,11 @@ public:
     if (!eaten)
       return E_POINTER;
     *eaten = FALSE;
-    if (modifier(key))
+    if (controlsPending && FAILED(synchronizeControls())) {
+      *eaten = composition != nullptr;
+      return S_OK;
+    }
+    if (!open || modifier(key))
       return S_OK;
     uint32_t symbol, modifiers;
     if (!session || disabled(context) ||
@@ -688,6 +966,151 @@ public:
       abandon(true);
     return S_OK;
   }
+  HRESULT STDMETHODCALLTYPE OnChange(REFGUID) override try {
+    return deactivating ? S_OK : synchronizeControls();
+  } catch (const std::bad_alloc &) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
+  }
+  HRESULT STDMETHODCALLTYPE GetInfo(TF_LANGBARITEMINFO *info) override {
+    if (!info)
+      return E_POINTER;
+    *info = {};
+    info->clsidService = serviceId;
+    info->guidItem = languageBarId;
+    info->dwStyle = TF_LBI_STYLE_BTN_MENU | TF_LBI_STYLE_SHOWNINTRAY |
+                    TF_LBI_STYLE_HIDDENSTATUSCONTROL;
+    wcscpy_s(info->szDescription, L"tgskk");
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetStatus(DWORD *status) override {
+    if (!status)
+      return E_POINTER;
+    *status = (!barShown ? TF_LBI_STATUS_HIDDEN : 0) |
+              (!session ? TF_LBI_STATUS_DISABLED : 0);
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Show(BOOL shown) override {
+    barShown = shown != FALSE;
+    updateBar();
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetText(BSTR *text) override try {
+    if (!text)
+      return E_POINTER;
+    *text = nullptr;
+    uint8_t mode = 0;
+    if (session && !currentMode(mode))
+      return E_FAIL;
+    const auto label = !open || !session ? std::wstring(L"OFF")
+                                         : wide(session->view()->mode_label);
+    *text = SysAllocString(label.c_str());
+    return *text ? S_OK : E_OUTOFMEMORY;
+  } catch (const std::bad_alloc &) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
+  }
+  HRESULT STDMETHODCALLTYPE GetTooltipString(BSTR *text) override {
+    return GetText(text);
+  }
+  HRESULT STDMETHODCALLTYPE GetIcon(HICON *icon) override try {
+    if (!icon)
+      return E_POINTER;
+    *icon = nullptr;
+    uint8_t mode = 0;
+    if (session && !currentMode(mode))
+      return E_FAIL;
+    const auto label = !open || !session ? std::wstring(L"×")
+                                         : wide(session->view()->mode_label);
+    *icon = inputModeIcon(label);
+    return *icon ? S_OK : E_FAIL;
+  } catch (const std::bad_alloc &) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
+  }
+
+  HRESULT STDMETHODCALLTYPE OnClick(TfLBIClick, POINT, const RECT *) override {
+    return E_NOTIMPL;
+  }
+  HRESULT STDMETHODCALLTYPE InitMenu(ITfMenu *menu) override try {
+    if (!menu)
+      return E_POINTER;
+    uint8_t mode = 0;
+    if (session && !currentMode(mode))
+      return E_FAIL;
+    auto add = [&](UINT command, const wchar_t *label, bool checked) {
+      return menu->AddMenuItem(command, checked ? TF_LBMENUF_CHECKED : 0,
+                               nullptr, nullptr, label,
+                               static_cast<ULONG>(wcslen(label)), nullptr);
+    };
+    HRESULT result = add(0, L"IME ON/OFF", open);
+    for (UINT i = 0; SUCCEEDED(result) && i < imeModes.size(); ++i)
+      result = add(i + 1, imeModes[i].name, open && i == mode);
+    if (SUCCEEDED(result))
+      result = add(6, L"設定", false);
+    return result;
+  } catch (const std::bad_alloc &) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
+  }
+  HRESULT STDMETHODCALLTYPE OnMenuSelect(UINT id) override try {
+    if (!session)
+      return TF_E_DISCONNECTED;
+    if (id == 6) {
+      const auto executable =
+          (std::filesystem::path(modulePath()).parent_path() /
+           L"tgskk-settings.exe")
+              .wstring();
+      auto result = reinterpret_cast<INT_PTR>(
+          ShellExecuteW(nullptr, L"open", executable.c_str(), nullptr, nullptr,
+                        SW_SHOWNORMAL));
+      return result > 32 ? S_OK : E_FAIL;
+    }
+    if (id > 6)
+      return E_INVALIDARG;
+    HRESULT result = S_OK;
+    if (id)
+      result = writeMode(static_cast<uint8_t>(id - 1));
+    if (SUCCEEDED(result))
+      result = writeControl(openCompartment, id ? 1 : !open);
+    if (SUCCEEDED(result))
+      result = synchronizeControls();
+    if (SUCCEEDED(result) && id) {
+      uint8_t actual = 0;
+      if (!currentMode(actual) || actual != id - 1)
+        return E_FAIL;
+    }
+    return result;
+  } catch (const std::bad_alloc &) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
+  }
+  HRESULT STDMETHODCALLTYPE AdviseSink(REFIID iid, IUnknown *unknown,
+                                       DWORD *cookie) override {
+    if (!unknown || !cookie)
+      return E_POINTER;
+    *cookie = TF_INVALID_COOKIE;
+    if (iid != IID_ITfLangBarItemSink)
+      return CONNECT_E_CANNOTCONNECT;
+    if (barSink)
+      return CONNECT_E_ADVISELIMIT;
+    const auto result =
+        unknown->QueryInterface(iid, reinterpret_cast<void **>(&barSink));
+    if (SUCCEEDED(result))
+      *cookie = 1;
+    return result;
+  }
+  HRESULT STDMETHODCALLTYPE UnadviseSink(DWORD cookie) override {
+    if (cookie != 1 || !barSink)
+      return CONNECT_E_NOCONNECTION;
+    release(barSink);
+    return S_OK;
+  }
   HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext *, WPARAM, LPARAM,
                                         BOOL *eaten) override {
     if (!eaten)
@@ -702,12 +1125,22 @@ public:
     *eaten = FALSE;
     return S_OK;
   }
-  HRESULT STDMETHODCALLTYPE OnPreservedKey(ITfContext *, REFGUID,
+  HRESULT STDMETHODCALLTYPE OnPreservedKey(ITfContext *, REFGUID guid,
                                            BOOL *eaten) override {
     if (!eaten)
       return E_POINTER;
     *eaten = FALSE;
-    return S_OK;
+    if (guid != imeToggleId && guid != imeOnId && guid != imeOffId)
+      return S_OK;
+    auto result = writeControl(openCompartment,
+                               guid == imeToggleId ? !open : guid == imeOnId);
+    if (SUCCEEDED(result)) {
+      *eaten = TRUE;
+      result = synchronizeControls();
+      if (result == E_PENDING)
+        result = S_OK;
+    }
+    return result;
   }
   HRESULT STDMETHODCALLTYPE OnSetFocus(BOOL foreground) override {
     if (!foreground)
@@ -807,6 +1240,8 @@ public:
   HRESULT edit(ITfContext *context, TfEditCookie cookie, uint32_t symbol,
                uint32_t modifiers, bool reset, bool &eaten) {
     eaten = false;
+    if (!reset && !open)
+      return S_FALSE;
     if (!session || (active && context != active))
       return TF_E_DISCONNECTED;
     const auto epoch = inputEpoch;
@@ -987,6 +1422,7 @@ public:
     }
     if (const auto diagnostic = session->takeDiagnostic(); !diagnostic.empty())
       reportCoreFailure("broker status", diagnostic.c_str());
+    bool modeChanged = view->mode_changed;
     bool consumed = view->consumed;
     if (!consumed && !*view->committed && !reset) {
       reset = true;
@@ -997,6 +1433,7 @@ public:
         return E_FAIL;
       }
     }
+    modeChanged |= view->mode_changed;
     // Application callbacks can deactivate the service and invalidate its view.
     const TgskkView snapshot = *view;
     view = &snapshot;
@@ -1099,6 +1536,11 @@ public:
     }
     editing = false;
     release(range);
+    if (SUCCEEDED(result) && modeChanged && currentInput()) {
+      const auto modeResult = publishMode();
+      if (FAILED(modeResult))
+        reportFailure("publish input mode", modeResult);
+    }
     return FAILED(result) ? reportFailure("apply edit", result) : result;
   }
 };
@@ -1286,18 +1728,29 @@ extern "C" HRESULT __stdcall DllRegisterServer() {
         result = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
                                   CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                   reinterpret_cast<void **>(&categories));
-      if (SUCCEEDED(result))
-        result = categories->RegisterCategory(
-            serviceId, GUID_TFCAT_TIP_KEYBOARD, serviceId);
+      if (SUCCEEDED(result)) {
+        for (const auto &category :
+             {GUID_TFCAT_TIP_KEYBOARD, systemTrayCategory}) {
+          result = categories->RegisterCategory(serviceId, category, serviceId);
+          if (FAILED(result))
+            break;
+        }
+      }
     }
   } catch (...) {
     result = E_OUTOFMEMORY;
   }
   if (FAILED(result) && createdRegistry) {
     HRESULT cleanup = S_OK;
-    if (categories)
-      cleanup = categories->UnregisterCategory(
-          serviceId, GUID_TFCAT_TIP_KEYBOARD, serviceId);
+    if (categories) {
+      for (const auto &category :
+           {systemTrayCategory, GUID_TFCAT_TIP_KEYBOARD}) {
+        const auto removed =
+            categories->UnregisterCategory(serviceId, category, serviceId);
+        if (FAILED(removed))
+          cleanup = removed;
+      }
+    }
     if (registeredProfile) {
       const HRESULT removed = profiles->Unregister(serviceId);
       if (FAILED(removed))
@@ -1336,9 +1789,15 @@ extern "C" HRESULT __stdcall DllUnregisterServer() {
       result = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
                                 CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                 reinterpret_cast<void **>(&categories));
-      if (SUCCEEDED(result))
-        result = categories->UnregisterCategory(
-            serviceId, GUID_TFCAT_TIP_KEYBOARD, serviceId);
+      if (SUCCEEDED(result)) {
+        for (const auto &category :
+             {systemTrayCategory, GUID_TFCAT_TIP_KEYBOARD}) {
+          const auto removed =
+              categories->UnregisterCategory(serviceId, category, serviceId);
+          if (FAILED(removed))
+            result = removed;
+        }
+      }
       HRESULT profileResult = CoCreateInstance(
           CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
           IID_ITfInputProcessorProfiles, reinterpret_cast<void **>(&profiles));

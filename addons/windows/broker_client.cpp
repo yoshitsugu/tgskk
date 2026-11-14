@@ -302,6 +302,8 @@ const TgskkView *Input::action(Op op, uint32_t argument, uint32_t modifiers) {
     return tgskk_session_select(local.get(), argument);
   case Op::Reset:
     return tgskk_session_reset(local.get());
+  case Op::Mode:
+    return tgskk_session_set_mode(local.get(), static_cast<uint8_t>(argument));
   default:
     return nullptr;
   }
@@ -321,6 +323,11 @@ const TgskkView *Input::reset() {
   left.clear();
   permissions = 0;
   return action(Op::Reset);
+}
+const TgskkView *Input::setMode(uint8_t mode) {
+  left.clear();
+  permissions = 0;
+  return action(Op::Mode, mode);
 }
 bool Input::mayProcess(uint32_t symbol, uint32_t modifiers) {
   if (remote)

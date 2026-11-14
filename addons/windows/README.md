@@ -21,7 +21,11 @@ processed it. Local fallback has no persistent learning, AI or server access.
 
 Elevated applications, AppContainer applications, secure desktop, UI-less mode,
 32-bit applications and ARM64 are outside this build's supported scope. Mouse
-candidate selection and Windows language-bar controls are not implemented.
+candidate selection is not implemented.
+The language bar shows the input mode and offers ON/OFF, kana/ASCII/full-width
+modes and Settings. The half-width/full-width key toggles IME ON/OFF; dedicated
+IME ON and IME OFF keys are also supported. Windows compartment changes are
+synchronized with the input engine. Turning OFF cancels pending composition.
 ASCII mode passes ordinary printable keys directly to the application.
 Mode-switch commands still go through the input engine.
 Unavailable optional InputScope metadata permits local dictionary input and local AI.

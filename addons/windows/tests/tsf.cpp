@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../tsf_compat.h"
+#include "../ime_controls.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -592,6 +593,13 @@ int run(int argc, char **argv) {
           "[--rejection|--rejection-control|--direct-key|--ai|--reentrant-"
           "scope]");
   const std::string mode = argc == 4 ? argv[3] : "";
+#ifndef __MINGW32__
+  require(conversionCompartmentId ==
+                  GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION &&
+              languageBarId == GUID_LBI_INPUTMODE &&
+              systemTrayCategory == GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+          "TSF compatibility GUIDs differ from Windows SDK");
+#endif
   const bool directKey = mode == "--direct-key";
   const bool reentrant = mode.starts_with("--reentrant-");
   SetEnvironmentVariableA("TGSKK_DICTIONARY", argv[2]);
@@ -640,6 +648,27 @@ int run(int argc, char **argv) {
           "TSF manager");
   TfClientId id = 0;
   require(SUCCEEDED(manager->Activate(&id)), "TSF activation");
+  ITfCompartmentMgr *controlManager = nullptr;
+  require(
+      SUCCEEDED(manager->QueryInterface(
+          IID_ITfCompartmentMgr, reinterpret_cast<void **>(&controlManager))),
+      "IME compartment manager");
+  auto setControl = [&](REFGUID guid, LONG value, bool dispatch = true) {
+    ITfCompartment *control = nullptr;
+    require(SUCCEEDED(controlManager->GetCompartment(guid, &control)),
+            "IME compartment");
+    VARIANT data;
+    VariantInit(&data);
+    data.vt = VT_I4;
+    data.lVal = value;
+    const auto result = control->SetValue(id, &data);
+    control->Release();
+    require(SUCCEEDED(result), "set IME compartment");
+    if (dispatch)
+      pump();
+  };
+  setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1);
+  setControl(conversionCompartmentId, 9);
   ITfDocumentMgr *document = nullptr;
   require(SUCCEEDED(manager->CreateDocumentMgr(&document)), "document");
   ITfDocumentMgr *emptyDocument = nullptr;
@@ -882,7 +911,77 @@ int run(int argc, char **argv) {
       std::puts("Native TSF surrounding-text AI ranking and commit passed.");
     }
   } else if (mode.empty()) {
+    ITfLangBarItemMgr *barManager = nullptr;
+    require(SUCCEEDED(manager->QueryInterface(
+                IID_ITfLangBarItemMgr, reinterpret_cast<void **>(&barManager))),
+            "language bar manager");
+    ITfLangBarItem *bar = nullptr;
+    require(SUCCEEDED(barManager->GetItem(languageBarId, &bar)),
+            "language bar item");
+    barManager->Release();
+    ITfLangBarItemButton *button = nullptr;
+    require(SUCCEEDED(bar->QueryInterface(IID_ITfLangBarItemButton,
+                                          reinterpret_cast<void **>(&button))),
+            "language bar button");
+    bar->Release();
+    BOOL preserved = FALSE;
+    require(
+        SUCCEEDED(keys->SimulatePreservedKey(context, imeOffId, &preserved)) &&
+            preserved,
+        "preserved IME OFF");
+    require(!key('A') && store->text.empty(), "IME OFF consumed input");
+    BSTR label = nullptr;
+    require(SUCCEEDED(button->GetText(&label)) && std::wstring(label) == L"OFF",
+            "OFF label");
+    SysFreeString(label);
+    HICON icon = nullptr;
+    require(SUCCEEDED(button->GetIcon(&icon)) && icon, "mode icon");
+    DestroyIcon(icon);
+    require(
+        SUCCEEDED(keys->SimulatePreservedKey(context, imeOnId, &preserved)) &&
+            preserved,
+        "preserved IME ON");
+    require(SUCCEEDED(button->OnMenuSelect(2)) && key('A') &&
+                store->text == L"ア",
+            "language bar katakana");
+    store->replace(L"");
+    pump();
+    setControl(conversionCompartmentId, 0);
+    require(!key('A'), "OS ASCII mode was ignored");
+    require(SUCCEEDED(button->OnMenuSelect(1)), "language bar hiragana");
+    require(key('K', true) && key('A'), "compose before IME OFF");
+    store->holdAsync = true;
+    setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 0);
+    require(key('A') && key('I') && store->text == L"▽か",
+            "IME OFF forwarded keys before deferred cleanup");
+    store->grantAsync();
+    for (unsigned attempt = 0; attempt < 25 && !store->text.empty(); ++attempt)
+      pump();
+    require(store->text.empty() && !key('A'),
+            "IME OFF retained pending composition");
+    setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1);
+    button->Release();
+    *store->scopeRead = [&] {
+      setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 0, false);
+    };
+    require(!key('K', true) && store->text.empty(),
+            "reentrant IME OFF consumed key");
+    *store->scopeRead = {};
+    setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1);
+    setControl(conversionCompartmentId,
+               IME_CMODE_ROMAN | IME_CMODE_NATIVE | IME_CMODE_FULLSHAPE);
     require(key('L'), "enter ASCII mode");
+    ITfCompartment *conversion = nullptr;
+    require(SUCCEEDED(controlManager->GetCompartment(conversionCompartmentId,
+                                                     &conversion)),
+            "conversion compartment for publication");
+    VARIANT published;
+    VariantInit(&published);
+    require(SUCCEEDED(conversion->GetValue(&published)) &&
+                published.vt == VT_I4 && published.lVal == IME_CMODE_ROMAN,
+            "engine mode was not published or discarded OS flags");
+    VariantClear(&published);
+    conversion->Release();
     const auto compositionsBeforeAscii = store->startedCompositions;
     require(!key('A') && !key('A', true) && !key(VK_SPACE),
             "ASCII keys were consumed");
@@ -1044,6 +1143,7 @@ int run(int argc, char **argv) {
   items->Release();
   remaining->Release();
   require(found == 0, "composition remained after final commit");
+  controlManager->Release();
   keys->Release();
   ITfInputProcessorProfileMgr *profileManager = nullptr;
   require(SUCCEEDED(profiles->QueryInterface(
