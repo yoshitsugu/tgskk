@@ -451,6 +451,7 @@ HWND createSettingsWindow(HINSTANCE instance, const Config &config, bool show) {
     wc.lpfnWndProc = settingsWndProc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
     wc.lpszClassName = L"tgskk-settings";
     if (!RegisterClassExW(&wc))

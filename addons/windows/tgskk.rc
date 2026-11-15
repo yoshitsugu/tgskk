@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The first icon resource is the TSF language profile icon (index 0).
+1 ICON "tgskk.ico"
