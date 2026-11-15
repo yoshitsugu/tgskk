@@ -574,6 +574,13 @@ class Service final : public ITfTextInputProcessorEx,
       reinterpret_cast<Service *>(owner)->refreshSettings();
       return 0;
     }
+    // Redraw the tray mode icon when the taskbar theme or contrast changes.
+    if (message == WM_SETTINGCHANGE || message == WM_SYSCOLORCHANGE ||
+        message == WM_THEMECHANGED) {
+      auto *service = reinterpret_cast<Service *>(owner);
+      if (!service->deactivating)
+        service->updateBar();
+    }
     return DefSubclassProc(hwnd, message, argument, data);
   }
   bool eligible(uint32_t symbol, uint32_t modifiers) const {

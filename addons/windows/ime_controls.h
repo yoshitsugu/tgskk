@@ -70,6 +70,34 @@ inline uint8_t modeFromFlags(DWORD flags, uint8_t previous) {
   return previous;
 }
 
+// Windows 10+ stores the taskbar theme separately from the app theme. A
+// missing value means an older shell, whose taskbar is dark by default.
+inline bool taskbarUsesLightTheme() {
+  constexpr auto key =
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+  DWORD value = 0, size = sizeof(value);
+  return RegGetValueW(HKEY_CURRENT_USER, key, L"SystemUsesLightTheme",
+                      RRF_RT_REG_DWORD, nullptr, &value,
+                      &size) == ERROR_SUCCESS &&
+         value != 0;
+}
+inline bool highContrastEnabled() {
+  HIGHCONTRASTW contrast{sizeof(contrast)};
+  return SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast,
+                               0) &&
+         (contrast.dwFlags & HCF_HIGHCONTRASTON);
+}
+inline COLORREF inputModeIconColor(bool lightTaskbar, bool highContrast,
+                                   COLORREF contrastText) {
+  if (highContrast)
+    return contrastText;
+  return lightTaskbar ? RGB(0, 0, 0) : RGB(255, 255, 255);
+}
+inline COLORREF inputModeIconColor() {
+  return inputModeIconColor(taskbarUsesLightTheme(), highContrastEnabled(),
+                            GetSysColor(COLOR_WINDOWTEXT));
+}
+
 inline HICON inputModeIcon(const std::wstring &label) {
   HICON icon = nullptr;
   const int width = GetSystemMetrics(SM_CXSMICON),
@@ -92,7 +120,7 @@ inline HICON inputModeIcon(const std::wstring &label) {
     PatBlt(maskDC, 0, 0, width, height, WHITENESS);
     SetBkMode(colorDC, TRANSPARENT);
     SetBkMode(maskDC, TRANSPARENT);
-    SetTextColor(colorDC, GetSysColor(COLOR_MENUTEXT));
+    SetTextColor(colorDC, inputModeIconColor());
     SetTextColor(maskDC, RGB(0, 0, 0));
     RECT area{0, 0, width, height};
     DrawTextW(colorDC, label.c_str(), -1, &area,

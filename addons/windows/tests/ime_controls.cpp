@@ -28,7 +28,15 @@ int main() {
     }
     require(modeFromFlags(IME_CMODE_NATIVE, 4) == 0,
             "native mode did not select hiragana");
-    std::puts("IME mode mapping, invalid flags and unrelated OS flags passed");
+    require(inputModeIconColor(false, false, RGB(1, 2, 3)) ==
+                RGB(255, 255, 255),
+            "dark taskbar did not use a light mode icon");
+    require(inputModeIconColor(true, false, RGB(1, 2, 3)) == RGB(0, 0, 0),
+            "light taskbar did not use a dark mode icon");
+    require(inputModeIconColor(false, true, RGB(1, 2, 3)) == RGB(1, 2, 3),
+            "high contrast did not use the system text color");
+    std::puts("IME mode mapping, invalid flags, unrelated OS flags and icon "
+              "colors passed");
     return 0;
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());

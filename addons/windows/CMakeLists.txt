@@ -35,7 +35,7 @@ target_include_directories(test-windows-broker-queue PRIVATE "${TGSKK_ROOT}/crat
 target_link_libraries(test-windows-broker-queue PRIVATE tgskk-broker-platform)
 add_test(NAME windows-broker-queue COMMAND test-windows-broker-queue)
 add_executable(test-windows-ime-controls tests/ime_controls.cpp)
-target_link_libraries(test-windows-ime-controls PRIVATE user32 gdi32 uuid)
+target_link_libraries(test-windows-ime-controls PRIVATE user32 gdi32 uuid advapi32)
 add_test(NAME windows-ime-controls COMMAND test-windows-ime-controls)
 add_executable(test-windows-input-scope tests/input_scope.cpp inputscope_guids.cpp)
 target_compile_definitions(test-windows-input-scope PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
