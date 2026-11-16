@@ -16,6 +16,25 @@ void require(bool okay, const std::string &message) {
   if (!okay)
     throw std::runtime_error(message);
 }
+void rightContextFraming() {
+  Request q;
+  q.op = Op::Key;
+  q.permissions = 5;
+  q.context = "駅で";
+  q.right = "を見る";
+  const auto decoded = request(encode(q));
+  require(decoded.context == q.context && decoded.right == q.right,
+          "right context framing");
+  q.permissions = 4;
+  q.context.clear();
+  bool rejected = false;
+  try {
+    request(encode(q));
+  } catch (const std::runtime_error &) {
+    rejected = true;
+  }
+  require(rejected, "right context accepted without AI permission");
+}
 void abandonedConnection() {
   const auto identity = Identity::current();
   PipeSecurity security(identity);
@@ -608,7 +627,7 @@ void adapterCases(const std::wstring &program, const std::wstring &dictionary) {
     require(!input.broker() && std::string(input.view()->preedit) == "▽か",
             "adopt replaced local composition");
     input.reset();
-    input.context("", false, false);
+    input.context("", "", false, false);
     require(
         input.key('a', 0) && !input.broker() &&
             std::string(input.view()->committed) == "あ",
@@ -1024,6 +1043,7 @@ int wmain(int argc, wchar_t **argv) {
       aiCases(program, dictionary, canonicalPath(argv[3]),
               canonicalPath(argv[4]));
     else {
+      rightContextFraming();
       abandonedConnection();
       sharedAndPersistence(program, dictionary);
       malformedAndIsolation(program, dictionary);

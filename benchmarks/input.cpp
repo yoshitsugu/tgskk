@@ -34,10 +34,24 @@ struct Samples {
   std::vector<double> keys, space, commit;
 };
 
+// The performance job also builds this file against the previous revision's
+// header, so accept both context signatures.
+static inline uint8_t setContext(uint8_t (*context)(TgskkSession *,
+                                                    const char *, const char *,
+                                                    uint8_t),
+                                 TgskkSession *session) {
+  return context(session, "駅で", "", 1);
+}
+static inline uint8_t setContext(uint8_t (*context)(TgskkSession *,
+                                                    const char *, uint8_t),
+                                 TgskkSession *session) {
+  return context(session, "駅で", 1);
+}
+
 static void run(TgskkSession *session, const Trace &trace, Samples *samples) {
   for (const unsigned char key : std::string(trace.keys)) {
     const auto start = Clock::now();
-    require(tgskk_session_context(session, "駅で", 1), "Context rejected");
+    require(setContext(tgskk_session_context, session), "Context rejected");
     require(tgskk_session_network_allowed(session, 1),
             "Server permission rejected");
     const auto *view =

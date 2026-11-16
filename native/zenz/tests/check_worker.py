@@ -19,7 +19,9 @@ WORKER, MODEL = (Path(arg).resolve() for arg in sys.argv[1:3])
 PROBE = Path(sys.argv[3]).resolve() if len(sys.argv) > 3 else None
 REFERENCE = os.environ.get('TGSKK_SERIAL_REFERENCE')
 sys.argv = sys.argv[:1]
-MAGIC = 0x325A4754
+MAGIC = 0x335A4754
+# The pinned serial reference predates right context and returns only base scores.
+REFERENCE_MAGIC = 0x325A4754
 REFUSED = 0xFFFFFFFF
 
 
@@ -33,8 +35,9 @@ class Worker:
             self.buffer = b''
             self.reader = threading.Thread(target=self.read_pipe, daemon=True)
             self.reader.start()
+        self.legacy = REFERENCE is not None and str(executable) == REFERENCE
         try:
-            if self.word() != MAGIC:
+            if self.word() != (REFERENCE_MAGIC if self.legacy else MAGIC):
                 raise AssertionError('Worker protocol version mismatch')
         except BaseException:
             self.close()
@@ -79,9 +82,13 @@ class Worker:
     def word(self):
         return struct.unpack('<I', self.read(4))[0]
 
-    def score(self, context, reading, candidates):
+    def pairs(self, context, right, reading, candidates):
+        """Returns (base, right) per candidate, or None when refused."""
+        if self.legacy and right:
+            raise AssertionError('The serial reference has no right context')
+        texts = [context, reading, *candidates] if self.legacy else [context, right, reading, *candidates]
         frame = struct.pack('<I', len(candidates))
-        for text in [context, reading, *candidates]:
+        for text in texts:
             encoded = text.encode()
             frame += struct.pack('<I', len(encoded)) + encoded
         self.process.stdin.write(frame)
@@ -91,10 +98,17 @@ class Worker:
             return None
         if count != len(candidates):
             raise AssertionError('Invalid response count')
-        scores = list(struct.unpack('<' + 'd' * count, self.read(count * 8)))
-        if not all(math.isfinite(value) for value in scores):
+        width = 1 if self.legacy else 2
+        values = struct.unpack('<' + 'd' * count * width, self.read(count * width * 8))
+        if not all(math.isfinite(value) for value in values):
             raise AssertionError('Non-finite candidate score')
-        return scores
+        if self.legacy:
+            return [(value, 0.0) for value in values]
+        return list(zip(values[::2], values[1::2]))
+
+    def score(self, context, reading, candidates):
+        pairs = self.pairs(context, '', reading, candidates)
+        return None if pairs is None else [base for base, _ in pairs]
 
     def close(self):
         try:
@@ -234,6 +248,41 @@ class NativeWorkerTests(unittest.TestCase):
                       for candidate in candidates]
             self.assertEqual(together, single)
             self.assertEqual(worker.score('駅で', 'キシャ', short), expected)
+
+    def test_right_context_leaves_base_scores_unchanged(self):
+        cases = [
+            ('', 'で豆をつまむ', 'ハシ', ['橋', '箸', '端']),
+            ('駅で', 'を見る', 'キシャ', ['記者', '汽車', '帰社', '貴社']),
+            ('駅で', '𠮷' * 8, 'キシャ', ['漢' * 96, '汽車']),
+            ('新聞を読んでいるときの', 'に話を聞く', 'キシャ',
+             ['気', '木', '汽車', '記者', '国際連合安全保障理事会', '機', '帰社', '貴社']),
+        ]
+        with Worker() as worker:
+            for context, right, reading, candidates in cases:
+                with self.subTest(context=context, right=right, reading=reading):
+                    base = worker.score(context, reading, candidates)
+                    pairs = worker.pairs(context, right, reading, candidates)
+                    self.assertEqual([b for b, _ in pairs], base)
+                    self.assertTrue(all(r < 0 for _, r in pairs))
+                    single = [worker.pairs(context, right, reading, [candidate])[0]
+                              for candidate in candidates]
+                    self.assertEqual(pairs, single)
+                    self.assertEqual(worker.pairs(context, right, reading, candidates[::-1]), single[::-1])
+                    self.assertEqual(worker.pairs(context, '', reading, candidates),
+                                     [(b, 0.0) for b in base])
+
+    def test_right_context_continues_the_candidate(self):
+        with Worker() as worker:
+            (base, right), = worker.pairs('駅で', 'を見る', 'キシャ', ['汽車'])
+            joined, = worker.score('駅で', 'キシャ', ['汽車を見る'])
+            self.assertAlmostEqual(base + right, joined, delta=1e-6)
+
+    def test_oversized_right_context_is_refused(self):
+        with Worker() as worker:
+            expected = worker.pairs('駅で', 'を見る', 'キシャ', ['汽車', '記者'])
+            self.assertIsNone(worker.pairs('駅で', '𠮷' * 9, 'キシャ', ['汽車', '記者']))
+            self.assertEqual(worker.pairs('駅で', 'を見る', 'キシャ', ['汽車', '記者']), expected)
+            self.assertIsNone(worker.process.poll())
 
     @unittest.skipUnless(PROBE, 'Linux dynamic-backend probe is not provided')
     def test_neither_cwd_nor_backend_path_loads_plugins(self):

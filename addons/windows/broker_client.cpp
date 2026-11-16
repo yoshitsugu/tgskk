@@ -40,12 +40,13 @@ std::unique_ptr<Connection> Connection::connect(const Config &config) {
   verifyPeer(handle.value, false, identity, config.broker);
   auto connection = std::make_unique<Connection>(
       Channel(std::move(handle)), config.fingerprint, config.inlineCandidates);
-  connection->perform(Op::Hello, 0, 0, 0, {}, helloBudget);
+  connection->perform(Op::Hello, 0, 0, 0, {}, {}, helloBudget);
   return connection;
 }
 const Snapshot &Connection::perform(Op op, uint32_t argument,
                                     uint32_t modifiers, uint32_t permissions,
-                                    std::string context, uint64_t budget) {
+                                    std::string context, std::string right,
+                                    uint64_t budget) {
   if (failed)
     throw std::runtime_error("Discard failed broker connection");
   failed = true;
@@ -57,6 +58,7 @@ const Snapshot &Connection::perform(Op op, uint32_t argument,
   q.modifiers = modifiers;
   q.permissions = permissions;
   q.context = std::move(context);
+  q.right = std::move(right);
   q.fingerprint = fingerprint;
   q.generation = current.generation;
   std::vector<uint8_t> body;
@@ -369,7 +371,7 @@ const TgskkView *Input::action(Op op, uint32_t argument, uint32_t modifiers) {
   if (remote) {
     try {
       remote->perform(op, argument, modifiers, op == Op::Key ? permissions : 0,
-                      op == Op::Key ? left : "");
+                      op == Op::Key ? left : "", op == Op::Key ? right : "");
       return remoteView();
     } catch (const BrokerReloading &error) {
       const bool idle = remote->current.preedit.empty();
@@ -411,11 +413,13 @@ const TgskkView *Input::select(size_t index) {
 }
 const TgskkView *Input::reset() {
   left.clear();
+  right.clear();
   permissions = 0;
   return action(Op::Reset);
 }
 const TgskkView *Input::setMode(uint8_t mode) {
   left.clear();
+  right.clear();
   permissions = 0;
   return action(Op::Mode, mode);
 }
@@ -439,8 +443,10 @@ const char *Input::candidate(size_t index, bool annotation) {
   const auto &c = s.candidates[index - s.start];
   return annotation ? c.annotation.c_str() : c.text.c_str();
 }
-void Input::context(std::string text, bool ai, bool network) {
-  left = ai ? std::move(text) : "";
+void Input::context(std::string leftText, std::string rightText, bool ai,
+                    bool network) {
+  left = ai ? std::move(leftText) : "";
+  right = ai ? std::move(rightText) : "";
   permissions = 4 | (ai ? 1 : 0) | (network ? 2 : 0);
 }
 } // namespace tgskk::windows

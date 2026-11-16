@@ -16,8 +16,11 @@ const MAX_CANDIDATES: usize = 8;
 const MAX_BYTES: usize = 1024;
 const CACHE_SIZE: usize = 16;
 const MIN_MARGIN: f64 = 1.5;
+// Measured: these improved ranking most without hurting left-context-only cases.
+const RIGHT_WEIGHT: f64 = 0.4;
+const RIGHT_CHARS: usize = 8;
 // A changed wire format must use a different handshake, including refusals.
-const PROTOCOL_MAGIC: u32 = 0x325A_4754;
+const PROTOCOL_MAGIC: u32 = 0x335A_4754;
 const REJECTED_REQUEST: u32 = u32::MAX;
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const UNAVAILABLE_AFTER_FAILURES: usize = 4;
@@ -37,10 +40,15 @@ pub enum Status {
     Unavailable = 2,
 }
 
+/// The candidate's log probability, and the joined candidate and right context
+/// log probability minus it.
+pub type Score = (f64, f64);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Key {
     epoch: u64,
     context: String,
+    right: String,
     reading: String,
     candidates: Vec<ConversionCandidate>,
     protected: Vec<usize>,
@@ -52,7 +60,7 @@ struct Job {
 struct Queue {
     pending: Mutex<Option<Job>>,
     wake: Condvar,
-    ready: Mutex<VecDeque<(Key, Vec<f64>)>>,
+    ready: Mutex<VecDeque<(Key, Vec<Score>)>>,
     stopped: AtomicBool,
     status: AtomicU8,
     scored: AtomicBool,
@@ -118,7 +126,7 @@ impl Worker {
             false
         }
     }
-    fn ready(&self, key: &Key) -> Option<Vec<f64>> {
+    fn ready(&self, key: &Key) -> Option<Vec<Score>> {
         if self.status() == Status::Unavailable {
             return None;
         }
@@ -160,7 +168,7 @@ impl Process {
             .set_read_timeout(Some(Duration::from_millis(500)))?;
         Ok(process)
     }
-    fn score(&mut self, key: &Key) -> io::Result<Vec<f64>> {
+    fn score(&mut self, key: &Key) -> io::Result<Vec<Score>> {
         let mut frame = Vec::new();
         frame.extend_from_slice(
             &u32::try_from(key.candidates.len())
@@ -169,8 +177,8 @@ impl Process {
                 })?
                 .to_le_bytes(),
         );
-        for text in std::iter::once(&key.context)
-            .chain(std::iter::once(&key.reading))
+        for text in [&key.context, &key.right, &key.reading]
+            .into_iter()
             .chain(key.candidates.iter().map(|c| &c.text))
         {
             if text.len() > MAX_BYTES {
@@ -202,16 +210,7 @@ impl Process {
         }
         let mut scores = Vec::new();
         for _ in &key.candidates {
-            let mut bytes = [0; 8];
-            self.socket.read_exact(&mut bytes)?;
-            let score = f64::from_le_bytes(bytes);
-            if !score.is_finite() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Invalid Zenz score",
-                ));
-            }
-            scores.push(score);
+            scores.push((read_score(&mut self.socket)?, read_score(&mut self.socket)?));
         }
         Ok(scores)
     }
@@ -220,6 +219,18 @@ fn read_word(socket: &mut impl Read) -> io::Result<u32> {
     let mut bytes = [0; 4];
     socket.read_exact(&mut bytes)?;
     Ok(u32::from_le_bytes(bytes))
+}
+fn read_score(socket: &mut impl Read) -> io::Result<f64> {
+    let mut bytes = [0; 8];
+    socket.read_exact(&mut bytes)?;
+    let score = f64::from_le_bytes(bytes);
+    if !score.is_finite() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid Zenz score",
+        ));
+    }
+    Ok(score)
 }
 fn run(queue: &Queue, executable: &Path, model: &Path) -> io::Result<()> {
     let mut process = Process::start(executable, model)?;
@@ -293,7 +304,7 @@ fn supervise(queue: &Queue, mut run: impl FnMut() -> io::Result<()>, delays: &[D
 
 fn worker_loop(
     queue: &Queue,
-    mut score: impl FnMut(&Key) -> io::Result<Vec<f64>>,
+    mut score: impl FnMut(&Key) -> io::Result<Vec<Score>>,
 ) -> io::Result<()> {
     loop {
         let job = {
@@ -332,7 +343,7 @@ fn job_is_ready(queue: &Queue, job: &Job) -> io::Result<bool> {
         .any(|(key, _)| key == &job.key))
 }
 
-fn complete_job(queue: &Queue, job: Job, result: io::Result<Vec<f64>>) -> io::Result<()> {
+fn complete_job(queue: &Queue, job: Job, result: io::Result<Vec<Score>>) -> io::Result<()> {
     let scores = match result {
         Ok(scores) => {
             queue.scored.store(true, Ordering::Release);
@@ -373,6 +384,10 @@ fn complete_job(queue: &Queue, job: Job, result: io::Result<Vec<f64>>) -> io::Re
 #[cfg(test)]
 mod simulation;
 
+fn is_tag(c: char) -> bool {
+    ('\u{ee00}'..='\u{ee0f}').contains(&c)
+}
+
 static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
 fn next_epoch() -> u64 {
     NEXT_EPOCH.fetch_add(1, Ordering::Relaxed)
@@ -380,6 +395,7 @@ fn next_epoch() -> u64 {
 struct State {
     worker: Worker,
     context: String,
+    right: String,
     enabled: bool,
     epoch: Arc<AtomicU64>,
     applied: bool,
@@ -417,15 +433,16 @@ impl State {
         if candidates.iter().any(|c| {
             c.text.chars().count() > 24
                 || c.text.len() > 96
-                || c.text.chars().any(|c| {
-                    c.is_ascii() || c == '\u{3000}' || ('\u{ee00}'..='\u{ee0f}').contains(&c)
-                })
+                || c.text
+                    .chars()
+                    .any(|c| c.is_ascii() || c == '\u{3000}' || is_tag(c))
         }) {
             return None;
         }
         Some(Key {
             epoch: self.epoch.load(Ordering::Relaxed),
             context: self.context.clone(),
+            right: self.right.clone(),
             reading: request
                 .reading
                 .chars()
@@ -453,7 +470,7 @@ impl State {
             return ConversionResponse::default();
         };
         self.hits += 1;
-        if let Some(index) = confident_winner(&scores, &key.protected) {
+        if let Some(index) = winner(&scores, &key.protected) {
             let mut order: Vec<_> = (0..request.candidates.len()).collect();
             // Protected entries keep their exact positions; other entries keep
             // their relative order when the winner moves to the front.
@@ -471,14 +488,23 @@ impl State {
         ConversionResponse::default()
     }
 }
-fn confident_winner(scores: &[f64], protected: &[usize]) -> Option<usize> {
+/// Combines a candidate's score with how well the right context follows it.
+#[must_use]
+pub fn mixed((base, right): Score) -> f64 {
+    base + RIGHT_WEIGHT * right
+}
+fn winner(scores: &[Score], protected: &[usize]) -> Option<usize> {
+    let mixed: Vec<_> = scores.iter().copied().map(mixed).collect();
+    let base: Vec<_> = scores.iter().map(|(base, _)| *base).collect();
+    // A confident mixed result that keeps the order must not fall back to base.
+    let first = confident_leader(&mixed).or_else(|| confident_leader(&base))?;
+    (first != 0 && !protected.contains(&first)).then_some(first)
+}
+fn confident_leader(scores: &[f64]) -> Option<usize> {
     let mut indices: Vec<_> = (0..scores.len()).collect();
     indices.sort_by(|a, b| scores[*b].total_cmp(&scores[*a]));
-    let winner = *indices.first()?;
-    (winner != 0
-        && !protected.contains(&winner)
-        && scores[winner] - scores[*indices.get(1)?] >= MIN_MARGIN)
-        .then_some(winner)
+    let first = *indices.first()?;
+    (scores[first] - scores[*indices.get(1)?] >= MIN_MARGIN).then_some(first)
 }
 #[derive(Clone)]
 pub struct Assistance(Rc<RefCell<State>>);
@@ -487,6 +513,7 @@ impl Assistance {
         let state = Rc::new(RefCell::new(State {
             worker,
             context: String::new(),
+            right: String::new(),
             enabled: false,
             epoch: Arc::new(AtomicU64::new(next_epoch())),
             applied: false,
@@ -499,19 +526,31 @@ impl Assistance {
         })));
         Self(state)
     }
-    pub fn context(&self, text: &str, enabled: bool) {
-        let text: String = text
-            .chars()
-            .filter(|c| !('\u{ee00}'..='\u{ee0f}').contains(c))
-            .rev()
-            .take(40)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+    pub fn context(&self, left: &str, right: &str, enabled: bool) {
+        let (left, right) = if enabled {
+            (
+                left.chars()
+                    .filter(|c| !is_tag(*c))
+                    .rev()
+                    .take(40)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect(),
+                right
+                    .chars()
+                    .take_while(|c| !matches!(c, '\n' | '\r'))
+                    .filter(|c| !is_tag(*c))
+                    .take(RIGHT_CHARS)
+                    .collect(),
+            )
+        } else {
+            (String::new(), String::new())
+        };
         let mut state = self.0.borrow_mut();
-        if state.context != text || state.enabled != enabled {
-            state.context = if enabled { text } else { String::new() };
+        if state.context != left || state.right != right || state.enabled != enabled {
+            state.context = left;
+            state.right = right;
             state.enabled = enabled;
             state.epoch.store(next_epoch(), Ordering::Release);
         }
@@ -520,6 +559,7 @@ impl Assistance {
         let mut state = self.0.borrow_mut();
         state.epoch.store(next_epoch(), Ordering::Release);
         state.context.clear();
+        state.right.clear();
         state.enabled = false;
         state.applied = false;
     }
@@ -562,9 +602,10 @@ impl Evaluator {
     pub fn score(
         &mut self,
         left: &str,
+        right: &str,
         katakana: &str,
         candidates: &[String],
-    ) -> io::Result<Vec<f64>> {
+    ) -> io::Result<Vec<Score>> {
         if candidates.len() > MAX_CANDIDATES {
             return Err(io::Error::other("At most eight candidates"));
         }
@@ -577,6 +618,7 @@ impl Evaluator {
         let result = process.score(&Key {
             epoch: 0,
             context: left.into(),
+            right: right.into(),
             reading: katakana.into(),
             candidates: candidates
                 .iter()
@@ -640,7 +682,10 @@ mod tests {
         )
         .unwrap()
     }
-    fn ready(assistance: &Assistance, req: &ConversionRequest, scores: Vec<f64>) {
+    fn base(scores: &[f64]) -> Vec<Score> {
+        scores.iter().map(|score| (*score, 0.)).collect()
+    }
+    fn ready(assistance: &Assistance, req: &ConversionRequest, scores: Vec<Score>) {
         let state = assistance.0.borrow();
         let key = state.key(req).unwrap();
         state
@@ -663,10 +708,10 @@ mod tests {
     fn confident_promotion_keeps_protected_positions_and_remaining_order() {
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker());
-        assistance.context("取引先である", true);
+        assistance.context("取引先である", "", true);
         let mut req = request();
         req.protected_indices = vec![1];
-        ready(&assistance, &req, vec![-6., -8., -5., -0.2]);
+        ready(&assistance, &req, base(&[-6., -8., -5., -0.2]));
         let response = assistance.0.borrow_mut().response(&req);
         assert_eq!(response.order, Some(vec![3, 1, 0, 2]));
         assert_eq!(response.learning, None);
@@ -674,14 +719,14 @@ mod tests {
     }
     #[test]
     fn close_scores_and_protected_first_candidate_prevent_intervention() {
-        assert_eq!(confident_winner(&[-1., -0.2, -5.], &[]), None);
-        assert_eq!(confident_winner(&[-5., -0.2, -6.], &[1]), None);
+        assert_eq!(winner(&base(&[-1., -0.2, -5.]), &[]), None);
+        assert_eq!(winner(&base(&[-5., -0.2, -6.]), &[1]), None);
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         let mut req = request();
         req.protected_indices = vec![0];
-        ready(&assistance, &req, vec![-5., -0.2, -6., -7.]);
+        ready(&assistance, &req, base(&[-5., -0.2, -6., -7.]));
         assert_eq!(assistance.0.borrow_mut().response(&req).order, None);
         assert!(!assistance.applied());
     }
@@ -689,9 +734,9 @@ mod tests {
     fn results_must_match_context_reading_candidate_identity_and_protection() {
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         let req = request();
-        ready(&assistance, &req, vec![-6., -0.2, -8., -9.]);
+        ready(&assistance, &req, base(&[-6., -0.2, -8., -9.]));
         assert_eq!(
             assistance.0.borrow_mut().response(&req).order,
             Some(vec![1, 0, 2, 3])
@@ -706,25 +751,137 @@ mod tests {
             }
             assert!(assistance.0.borrow_mut().response(&other).order.is_none());
         }
-        assistance.context("新聞の", true);
+        assistance.context("新聞の", "", true);
         assert!(assistance.0.borrow_mut().response(&req).order.is_none());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         assert!(assistance.0.borrow_mut().response(&req).order.is_none());
+    }
+    #[test]
+    fn results_must_match_the_right_context() {
+        let mut input = input();
+        let worker = worker();
+        let assistance = Assistance::attach(&mut input, worker.clone());
+        assistance.context("駅で", "に乗る", true);
+        let req = request();
+        ready(&assistance, &req, base(&[-6., -0.2, -8., -9.]));
+        let key = assistance.0.borrow().key(&req).unwrap();
+        assert_eq!(key.right, "に乗る");
+        let mut other = key.clone();
+        other.right = "を書く".into();
+        assert!(worker.ready(&key).is_some());
+        assert!(worker.ready(&other).is_none());
+        assistance.context("駅で", "を書く", true);
+        assert!(assistance.0.borrow_mut().response(&req).order.is_none());
+        assistance.context("駅で", "", true);
+        assert!(assistance.0.borrow_mut().response(&req).order.is_none());
+    }
+    #[test]
+    fn empty_right_context_keeps_the_left_only_ranking() {
+        for (scores, protected, expected) in [
+            (vec![-6., -8., -5., -0.2], vec![1], Some(3)),
+            (vec![-6., -0.2, -8., -9.], vec![], Some(1)),
+            (vec![-1., -0.2, -5.], vec![], None),
+            (vec![-5., -0.2, -6.], vec![1], None),
+            (vec![-0.2, -5., -6.], vec![], None),
+            (vec![-1.7, -0.2, -8.], vec![], Some(1)),
+            (vec![-0.2], vec![], None),
+        ] {
+            assert_eq!(
+                winner(&base(&scores), &protected),
+                expected,
+                "{scores:?} {protected:?}"
+            );
+        }
+        let mut input = input();
+        let assistance = Assistance::attach(&mut input, worker());
+        assistance.context("取引先である", "", true);
+        let mut req = request();
+        req.protected_indices = vec![1];
+        ready(&assistance, &req, base(&[-6., -8., -5., -0.2]));
+        assert_eq!(
+            assistance.0.borrow_mut().response(&req).order,
+            Some(vec![3, 1, 0, 2])
+        );
+    }
+    #[test]
+    fn confident_right_context_promotes_a_candidate_the_left_alone_does_not() {
+        let scores = [(-1., -10.), (-1.5, -2.), (-5., -10.), (-6., -10.)];
+        let left_only: Vec<_> = scores.iter().map(|(base, _)| *base).collect();
+        assert_eq!(winner(&base(&left_only), &[]), None);
+        let mut input = input();
+        let assistance = Assistance::attach(&mut input, worker());
+        assistance.context("", "に乗る", true);
+        let req = request();
+        ready(&assistance, &req, scores.to_vec());
+        assert_eq!(
+            assistance.0.borrow_mut().response(&req).order,
+            Some(vec![1, 0, 2, 3])
+        );
+        assert!(assistance.applied());
+        assert_eq!(winner(&scores, &[1]), None);
+    }
+    #[test]
+    fn confident_right_context_keeps_the_first_candidate_against_the_left() {
+        let scores = [(-5., 0.), (-0.2, -20.), (-8., -20.), (-9., -20.)];
+        let left_only: Vec<_> = scores.iter().map(|(base, _)| *base).collect();
+        assert_eq!(winner(&base(&left_only), &[]), Some(1));
+        let mut input = input();
+        let assistance = Assistance::attach(&mut input, worker());
+        assistance.context("駅で", "を書く", true);
+        let req = request();
+        ready(&assistance, &req, scores.to_vec());
+        assert_eq!(assistance.0.borrow_mut().response(&req).order, None);
+        assert!(!assistance.applied());
+    }
+    #[test]
+    fn close_mixed_scores_fall_back_to_the_left_context() {
+        let scores = [(-6., 0.), (-0.2, -5.), (-2., 0.), (-9., 0.)];
+        assert_eq!(winner(&scores, &[]), Some(1));
+        assert_eq!(winner(&scores, &[1]), None);
+        let mut input = input();
+        let assistance = Assistance::attach(&mut input, worker());
+        assistance.context("駅で", "を", true);
+        let req = request();
+        ready(&assistance, &req, scores.to_vec());
+        assert_eq!(
+            assistance.0.borrow_mut().response(&req).order,
+            Some(vec![1, 0, 2, 3])
+        );
+    }
+    #[test]
+    fn right_context_stops_at_a_line_break_and_drops_prompt_tags() {
+        let mut input = input();
+        let assistance = Assistance::attach(&mut input, worker());
+        for (right, expected) in [
+            ("を見る\n次の行", "を見る"),
+            ("に乗る\r\n次の行", "に乗る"),
+            ("\n次の行", ""),
+            ("あいうえおかきくけこ", "あいうえおかきく"),
+            ("を\u{ee01}見\u{ee0f}るために出かける", "を見るために出か"),
+        ] {
+            assistance.context("駅で", right, true);
+            assert_eq!(assistance.0.borrow().right, expected, "{right:?}");
+        }
+        assistance.context("駅で", "を見る", false);
+        assert_eq!(assistance.0.borrow().right, "");
+        assistance.context("駅で", "を見る", true);
+        assistance.reset();
+        assert_eq!(assistance.0.borrow().right, "");
     }
     #[test]
     fn sensitive_reset_and_dropped_sessions_invalidate_queued_work() {
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         let req = request();
-        ready(&assistance, &req, vec![-6., -0.2, -8., -9.]);
+        ready(&assistance, &req, base(&[-6., -0.2, -8., -9.]));
         let epoch = assistance.0.borrow().epoch.clone();
         let before = epoch.load(Ordering::Acquire);
-        assistance.context("password", false);
+        assistance.context("password", "", false);
         assert_ne!(before, epoch.load(Ordering::Acquire));
         assert_eq!(assistance.0.borrow().context, "");
         assert!(assistance.0.borrow_mut().response(&req).order.is_none());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         assistance.reset();
         assert!(assistance.0.borrow_mut().response(&req).order.is_none());
         let before = epoch.load(Ordering::Acquire);
@@ -737,7 +894,7 @@ mod tests {
         let worker = worker();
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker.clone());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         let req = request();
         let key = assistance.0.borrow().key(&req).unwrap();
         let _pending = worker.0.queue.pending.lock().unwrap();
@@ -758,6 +915,7 @@ mod tests {
         let key = |reading: &str, number| Key {
             epoch: number,
             context: "駅で".into(),
+            right: String::new(),
             reading: reading.into(),
             candidates: request().candidates,
             protected: vec![],
@@ -772,7 +930,7 @@ mod tests {
             worker_loop(&queue, |key| {
                 started_tx.send(key.reading.clone()).unwrap();
                 continue_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-                Ok(vec![-1.; key.candidates.len()])
+                Ok(vec![(-1., 0.); key.candidates.len()])
             })
         });
         assert_eq!(
@@ -806,7 +964,7 @@ mod tests {
         let queue = worker.0.queue.clone();
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker.clone());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         let key = assistance.0.borrow().key(&request()).unwrap();
         worker.offer(Job {
             key: key.clone(),
@@ -823,7 +981,7 @@ mod tests {
                         if attempts == 1 {
                             Err(io::Error::new(io::ErrorKind::TimedOut, "test timeout"))
                         } else {
-                            Ok(vec![-5., -0.2, -8., -9.])
+                            Ok(base(&[-5., -0.2, -8., -9.]))
                         }
                     })
                 },
@@ -928,7 +1086,7 @@ mod tests {
         let queue = worker.0.queue.clone();
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker.clone());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         let valid = assistance.0.borrow().key(&request()).unwrap();
         let mut invalid = valid.clone();
         invalid.reading = "BAD".into();
@@ -943,7 +1101,7 @@ mod tests {
                         "invalid request",
                     ))
                 } else {
-                    Ok(vec![-5., -0.2, -8., -9.])
+                    Ok(base(&[-5., -0.2, -8., -9.]))
                 }
             })
         });
@@ -979,8 +1137,8 @@ mod tests {
     fn context_updates_keep_the_indicator_for_an_already_ranked_list() {
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker());
-        assistance.context("駅で", true);
-        ready(&assistance, &request(), vec![-6., -0.2, -8., -9.]);
+        assistance.context("駅で", "", true);
+        ready(&assistance, &request(), base(&[-6., -0.2, -8., -9.]));
         assert!(
             assistance
                 .0
@@ -989,7 +1147,7 @@ mod tests {
                 .order
                 .is_some()
         );
-        assistance.context("新しい文脈", true);
+        assistance.context("新しい文脈", "", true);
         assert!(assistance.applied());
         assistance.reset();
         assert!(!assistance.applied());
@@ -998,7 +1156,7 @@ mod tests {
     fn prompt_tags_in_context_are_removed_and_tagged_candidates_are_not_scored() {
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker());
-        assistance.context("駅\u{ee01}で", true);
+        assistance.context("駅\u{ee01}で", "", true);
         assert_eq!(assistance.0.borrow().context, "駅で");
         let mut req = request();
         req.candidates[1].text.push('\u{ee01}');
@@ -1031,14 +1189,14 @@ mod tests {
         let worker = worker();
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker.clone());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         input.process_key(&"K".parse().unwrap());
         assistance.prefetch(&input);
         let job = worker.0.queue.pending.lock().unwrap().take().unwrap();
         assert_eq!(job.key.context, "駅で");
         assert_eq!(job.key.reading, "");
         assert!(job.key.candidates.is_empty(), "{:?}", job.key.candidates);
-        ready(&assistance, &request(), vec![-6., -0.2, -8., -9.]);
+        ready(&assistance, &request(), base(&[-6., -0.2, -8., -9.]));
         worker
             .0
             .queue
@@ -1063,7 +1221,7 @@ mod tests {
         }
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker);
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         assert!(
             assistance
                 .0
@@ -1077,7 +1235,7 @@ mod tests {
     fn kana_technical_and_okuri_policy_bounds_worker_inputs() {
         let mut input = input();
         let assistance = Assistance::attach(&mut input, worker());
-        assistance.context(&"あ".repeat(200), true);
+        assistance.context(&"あ".repeat(200), "", true);
         assert_eq!(assistance.0.borrow().context.chars().count(), 40);
         let mut req = request();
         req.candidates[1].text = "Rust".into();
@@ -1100,6 +1258,7 @@ mod protocol_tests {
         Key {
             epoch: 0,
             context: "駅で".into(),
+            right: "を見る".into(),
             reading: "キシャ".into(),
             candidates: vec![ConversionCandidate {
                 text: "汽車".into(),
@@ -1124,7 +1283,7 @@ mod protocol_tests {
         let (mut process, mut server) = pair();
         let thread = std::thread::spawn(move || {
             assert_eq!(read_word(&mut server).unwrap(), 1);
-            for expected in ["駅で", "キシャ", "汽車"] {
+            for expected in ["駅で", "を見る", "キシャ", "汽車"] {
                 let len = read_word(&mut server).unwrap();
                 let mut bytes = vec![0; len as usize];
                 server.read_exact(&mut bytes).unwrap();
@@ -1132,8 +1291,9 @@ mod protocol_tests {
             }
             server.write_all(&1u32.to_le_bytes()).unwrap();
             server.write_all(&(-0.25f64).to_le_bytes()).unwrap();
+            server.write_all(&(-1.5f64).to_le_bytes()).unwrap();
         });
-        assert_eq!(process.score(&key()).unwrap(), vec![-0.25]);
+        assert_eq!(process.score(&key()).unwrap(), vec![(-0.25, -1.5)]);
         thread.join().unwrap();
     }
     #[test]
@@ -1143,16 +1303,19 @@ mod protocol_tests {
         server.write_all(&REJECTED_REQUEST.to_le_bytes()).unwrap();
         server.write_all(&1u32.to_le_bytes()).unwrap();
         server.write_all(&(-0.25f64).to_le_bytes()).unwrap();
+        server.write_all(&0f64.to_le_bytes()).unwrap();
         assert_eq!(
             evaluator
-                .score("駅で", "キシャ", &["汽車".into()])
+                .score("駅で", "", "キシャ", &["汽車".into()])
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::InvalidInput
         );
         assert_eq!(
-            evaluator.score("駅で", "キシャ", &["汽車".into()]).unwrap(),
-            vec![-0.25]
+            evaluator
+                .score("駅で", "", "キシャ", &["汽車".into()])
+                .unwrap(),
+            vec![(-0.25, 0.)]
         );
     }
     #[test]
@@ -1164,7 +1327,7 @@ mod protocol_tests {
                 server.write_all(&response).unwrap();
             }
             let error = evaluator
-                .score("駅で", "キシャ", &["汽車".into()])
+                .score("駅で", "", "キシャ", &["汽車".into()])
                 .unwrap_err();
             assert!(matches!(
                 error.kind(),
@@ -1172,7 +1335,7 @@ mod protocol_tests {
             ));
             assert_eq!(
                 evaluator
-                    .score("駅で", "キシャ", &["汽車".into()])
+                    .score("駅で", "", "キシャ", &["汽車".into()])
                     .unwrap_err()
                     .kind(),
                 io::ErrorKind::BrokenPipe
@@ -1186,6 +1349,18 @@ mod protocol_tests {
             [
                 1u32.to_le_bytes().as_slice(),
                 f64::NAN.to_le_bytes().as_slice(),
+                0f64.to_le_bytes().as_slice(),
+            ]
+            .concat(),
+            [
+                1u32.to_le_bytes().as_slice(),
+                (-0.25f64).to_le_bytes().as_slice(),
+                f64::INFINITY.to_le_bytes().as_slice(),
+            ]
+            .concat(),
+            [
+                1u32.to_le_bytes().as_slice(),
+                (-0.25f64).to_le_bytes().as_slice(),
             ]
             .concat(),
             vec![1, 0],
@@ -1199,6 +1374,10 @@ mod protocol_tests {
         let (mut process, _server) = pair();
         let mut oversized = key();
         oversized.context = "a".repeat(MAX_BYTES + 1);
+        assert!(process.score(&oversized).is_err());
+        let (mut process, _server) = pair();
+        let mut oversized = key();
+        oversized.right = "a".repeat(MAX_BYTES + 1);
         assert!(process.score(&oversized).is_err());
     }
 }

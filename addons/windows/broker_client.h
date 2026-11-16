@@ -23,7 +23,7 @@ public:
   static std::unique_ptr<Connection> connect(const Config &);
   const Snapshot &perform(Op, uint32_t argument = 0, uint32_t modifiers = 0,
                           uint32_t permissions = 0, std::string context = {},
-                          uint64_t budget = keyBudget);
+                          std::string right = {}, uint64_t budget = keyBudget);
   HANDLE handle() const { return channel.handle(); }
 };
 struct Connecting {
@@ -75,14 +75,14 @@ public:
   const TgskkView *setMode(uint8_t mode);
   bool mayProcess(uint32_t symbol, uint32_t modifiers);
   const char *candidate(size_t index, bool annotation = false);
-  void context(std::string text, bool ai, bool network);
+  void context(std::string left, std::string right, bool ai, bool network);
   const char *error() const { return diagnostic.c_str(); }
   std::string takeDiagnostic() { return std::exchange(diagnostic, {}); }
   bool takeTransportFailure() { return std::exchange(transportFailed, false); }
   bool broker() const { return bool(remote); }
 
 private:
-  std::string left;
+  std::string left, right;
   uint32_t permissions = 0;
 };
 } // namespace tgskk::windows

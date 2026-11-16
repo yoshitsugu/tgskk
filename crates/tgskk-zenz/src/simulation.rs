@@ -40,7 +40,7 @@ impl Simulation {
         let worker = tests::worker();
         let mut input = tests::input();
         let assistance = Assistance::attach(&mut input, worker.clone());
-        assistance.context("駅で", true);
+        assistance.context("駅で", "", true);
         let mut simulation = Self {
             random: Random(seed),
             events: BTreeMap::new(),
@@ -109,12 +109,12 @@ impl Simulation {
                         self.version += 1;
                     }
                     match change {
-                        0 => self.assistance.context("新聞の", true),
+                        0 => self.assistance.context("新聞の", "", true),
                         1 => {
                             self.assistance.reset();
-                            self.assistance.context("駅で", true);
+                            self.assistance.context("駅で", "", true);
                         }
-                        2 => self.assistance.context("password", false),
+                        2 => self.assistance.context("password", "", false),
                         _ => self.alternate_reading = true,
                     }
                     let _ = self.input.reset();
@@ -166,8 +166,8 @@ impl Simulation {
                     let key = job.key.clone();
                     let result = match failure {
                         0 => {
-                            let mut scores = vec![-6.; key.candidates.len()];
-                            scores[1] = -0.2;
+                            let mut scores = vec![(-6., 0.); key.candidates.len()];
+                            scores[1].0 = -0.2;
                             Ok(scores)
                         }
                         1 => Err(io::Error::from(io::ErrorKind::TimedOut)),

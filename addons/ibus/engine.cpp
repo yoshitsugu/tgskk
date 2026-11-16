@@ -3,6 +3,7 @@
 #include "paths.h"
 #include "../common/mode_colors.h"
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
 
@@ -72,13 +73,21 @@ static std::string suffix(const std::string &text) {
   const auto count = g_utf8_strlen(text.c_str(), -1);
   return count > 96 ? g_utf8_offset_to_pointer(text.c_str(), count - 96) : text;
 }
+static std::string linePrefix(const char *text) {
+  const std::string line(text, std::strcspn(text, "\r\n"));
+  const auto count = g_utf8_strlen(line.c_str(), -1);
+  return count > 32
+             ? line.substr(0, g_utf8_offset_to_pointer(line.c_str(), 32) -
+                                  line.c_str())
+             : line;
+}
 struct State {
   TgskkSession *session = nullptr;
   bool focused = false, sensitive = false, selection = false, observed = false;
   bool list = false;
   size_t offset = 0;
   guint indicatorTimer = 0;
-  std::string left, snapshot;
+  std::string left, right, snapshot;
   ~State() {
     if (indicatorTimer) {
       g_source_remove(indicatorTimer);
@@ -87,6 +96,7 @@ struct State {
   }
   void forget() {
     left.clear();
+    right.clear();
     snapshot.clear();
     observed = false;
   }
@@ -204,9 +214,9 @@ static void context(IBusEngine *engine) {
   tgskk_session_network_allowed(s.session, allowed);
   if (!allowed || !resources->config.ai) {
     s.forget();
-    tgskk_session_context(s.session, nullptr, 0);
+    tgskk_session_context(s.session, nullptr, nullptr, 0);
   } else {
-    tgskk_session_context(s.session, s.left.c_str(), 1);
+    tgskk_session_context(s.session, s.left.c_str(), s.right.c_str(), 1);
   }
 }
 static void page(IBusEngine *engine, bool forward, bool registration) {
@@ -323,7 +333,7 @@ static gboolean key(IBusEngine *engine, guint symbol, guint, guint modifiers) {
   }
   if (!consumed) {
     s.forget();
-    tgskk_session_context(s.session, nullptr, 0);
+    tgskk_session_context(s.session, nullptr, nullptr, 0);
   }
   return consumed;
 }
@@ -364,8 +374,10 @@ static void surrounding(IBusEngine *engine, IBusText *text, guint cursor,
   if (s.sensitive || !s.focused || s.selection) {
     s.forget();
   } else {
-    const auto left = suffix(
-        std::string(text->text, g_utf8_offset_to_pointer(text->text, cursor)));
+    const auto *caret = g_utf8_offset_to_pointer(text->text, cursor);
+    const auto left = suffix(std::string(text->text, caret - text->text));
+    // Committing inserts at the caret, so the right side stays current.
+    s.right = linePrefix(caret);
     if (!s.observed || s.snapshot != left) {
       s.left = left;
       s.snapshot = left;

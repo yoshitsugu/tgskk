@@ -133,11 +133,13 @@ public:
   uint64_t generation = 0;
   size_t candidateOffset = 0;
   std::string left;
+  std::string right;
   std::string observedLeft;
   bool observed = false;
   bool sensitive = false;
   void forgetContext() {
     left.clear();
+    right.clear();
     observedLeft.clear();
     observed = false;
   }
@@ -267,7 +269,7 @@ public:
     render(ic, view);
     if (view && !view->consumed) {
       state->forgetContext();
-      tgskk_session_context(session, nullptr, 0);
+      tgskk_session_context(session, nullptr, nullptr, 0);
       tgskk_session_network_allowed(session, 0);
     }
   }
@@ -395,6 +397,13 @@ private:
                : text;
   }
 
+  static std::string linePrefix(const std::string &text) {
+    const auto line = text.substr(0, text.find_first_of("\r\n"));
+    const auto length = utf8::length(line);
+    return length > 32 ? line.substr(0, utf8::ncharByteLength(line.begin(), 32))
+                       : line;
+  }
+
   void updateContext(InputContext *ic) {
     auto *state = ic->propertyFor(&factory_);
     const auto &surrounding = ic->surroundingText();
@@ -407,16 +416,18 @@ private:
     tgskk_session_network_allowed(state->session.get(), allowed);
     if (!allowed || !*config_.zenzEnabled) {
       state->forgetContext();
-      tgskk_session_context(state->session.get(), nullptr, 0);
+      tgskk_session_context(state->session.get(), nullptr, nullptr, 0);
       return;
     }
     if (!surrounding.isValid() && state->observed) {
       state->forgetContext();
     }
     if (surrounding.isValid()) {
-      const auto left = suffix(surrounding.text().substr(
-          0, utf8::ncharByteLength(surrounding.text().begin(),
-                                   surrounding.cursor())));
+      const auto caret = utf8::ncharByteLength(surrounding.text().begin(),
+                                               surrounding.cursor());
+      const auto left = suffix(surrounding.text().substr(0, caret));
+      // Committing inserts at the caret, so the right side stays current.
+      state->right = linePrefix(surrounding.text().substr(caret));
       // Applications may acknowledge commitString after subsequent keys arrive.
       // An unchanged snapshot must not discard our newer local commits.
       if (!state->observed || state->observedLeft != left) {
@@ -425,7 +436,8 @@ private:
         state->observed = true;
       }
     }
-    tgskk_session_context(state->session.get(), state->left.c_str(), 1);
+    tgskk_session_context(state->session.get(), state->left.c_str(),
+                          state->right.c_str(), 1);
   }
 
   void configure(const TgskkConfig &next, bool persist) {

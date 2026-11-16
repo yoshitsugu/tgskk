@@ -78,8 +78,12 @@ def worker_process(executable, model):
     process = subprocess.Popen([str(executable), str(model)], stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
-        if read_exact(process.stdout, 4) != struct.pack('<I', 0x325A4754):
+        # The baseline worker comes from the previous revision and may still
+        # speak the older protocol without right context.
+        version, = struct.unpack('<I', read_exact(process.stdout, 4))
+        if version not in (0x325A4754, 0x335A4754):
             raise ValueError('AI worker protocol mismatch')
+        process.right_context = version == 0x335A4754
         yield process
     finally:
         with contextlib.suppress(BrokenPipeError, OSError):
@@ -94,7 +98,7 @@ def worker_process(executable, model):
 
 def score(process, context, reading, candidates):
     frame = struct.pack('<I', len(candidates))
-    for text in [context, reading, *candidates]:
+    for text in [context, *([''] if process.right_context else []), reading, *candidates]:
         data = text.encode('utf-8')
         frame += struct.pack('<I', len(data)) + data
     process.stdin.write(frame)
@@ -102,7 +106,8 @@ def score(process, context, reading, candidates):
     count, = struct.unpack('<I', read_exact(process.stdout, 4))
     if count != len(candidates):
         raise ValueError(f'Worker rejected scoring workload: count={count}')
-    scores = struct.unpack('<' + 'd' * count, read_exact(process.stdout, count * 8))
+    values = count * (2 if process.right_context else 1)
+    scores = struct.unpack('<' + 'd' * values, read_exact(process.stdout, values * 8))
     if not all(math.isfinite(value) for value in scores):
         raise ValueError('AI worker returned a non-finite score')
 

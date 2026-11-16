@@ -258,6 +258,7 @@ unsafe extern "C" fn tgskk_session_set_zenz(
 unsafe extern "C" fn tgskk_session_context(
     session: *mut TgskkSession,
     left: *const c_char,
+    right: *const c_char,
     enabled: u8,
 ) -> u8 {
     let Some(session) = (unsafe { session.as_mut() }) else {
@@ -267,13 +268,13 @@ unsafe extern "C" fn tgskk_session_context(
         return 0;
     }
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
-        let text = if enabled == 0 {
-            ""
+        let (left, right) = if enabled == 0 {
+            ("", "")
         } else {
-            unsafe { string_arg(left)? }
+            unsafe { (string_arg(left)?, string_arg(right)?) }
         };
         if let Some(assistance) = &session.assistance {
-            assistance.context(text, enabled != 0);
+            assistance.context(left, right, enabled != 0);
         }
         Ok(())
     }));
@@ -1019,15 +1020,31 @@ mod tests {
             assert!(tgskk_zenz_take_error(ptr::null()).is_null());
             tgskk_zenz_free(zenz);
             assert_eq!(
-                tgskk_session_context(fixture.session, c"駅で".as_ptr(), 1),
+                tgskk_session_context(fixture.session, c"駅で".as_ptr(), c"に乗る".as_ptr(), 1),
                 1
             );
-            assert_eq!(tgskk_session_context(fixture.session, ptr::null(), 1), 0);
             assert_eq!(
-                message(tgskk_session_error(fixture.session)),
-                "Required string is NULL"
+                tgskk_session_context(fixture.session, c"駅で".as_ptr(), c"".as_ptr(), 1),
+                1
             );
-            assert_eq!(tgskk_session_context(fixture.session, ptr::null(), 0), 1);
+            for (left, right) in [
+                (ptr::null(), c"に乗る".as_ptr()),
+                (c"駅で".as_ptr(), ptr::null()),
+            ] {
+                assert_eq!(tgskk_session_context(fixture.session, left, right, 1), 0);
+                assert_eq!(
+                    message(tgskk_session_error(fixture.session)),
+                    "Required string is NULL"
+                );
+            }
+            assert_eq!(
+                tgskk_session_context(fixture.session, ptr::null(), ptr::null(), 0),
+                1
+            );
+            assert_eq!(
+                tgskk_session_context(fixture.session, c"駅で".as_ptr(), c"に乗る".as_ptr(), 0),
+                1
+            );
             let view = keys(fixture.session, "space");
             assert_eq!(message((*view).preedit), "▼漢字");
             assert_eq!((*view).zenz_applied, 0);

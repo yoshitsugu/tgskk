@@ -80,18 +80,20 @@ uint8_t tgskk_zenz_status(const TgskkZenz *zenz);
 /* Each error is returned once. Free non-NULL strings with tgskk_string_free. */
 char *tgskk_zenz_take_error(const TgskkZenz *zenz);
 uint8_t tgskk_session_set_zenz(TgskkSession *session, const TgskkZenz *zenz);
-/* Call before each key with bounded text strictly left of the caret. enabled=0
- * invalidates pending work and clears context, including for sensitive fields.
- * Neither function performs inference or waits for the worker. */
+/* Call before each key with bounded text strictly left and right of the caret.
+ * Both strings are required unless enabled=0, which invalidates pending work
+ * and clears both contexts, including for sensitive fields. Neither function
+ * performs inference or waits for the worker. */
 uint8_t tgskk_session_context(TgskkSession *session, const char *left,
-                              uint8_t enabled);
+                              const char *right, uint8_t enabled);
 
 /* SKK server workers start idle. Only conversions with no local candidates
  * may wait (0..1000 ms); DNS, network and helper IPC run on the worker thread.
  * Google uses a lazily spawned --stdio helper with UTF-8; custom servers use
- * euc-jp or utf-8. Only the reading is transmitted, never left context.
- * Sessions retain the worker after the handle is freed. NULL in set_skkserv
- * disables it without changing composition or the local AI provider. */
+ * euc-jp or utf-8. Only the reading is transmitted, never text around the
+ * caret. Sessions retain the worker after the handle is freed. NULL in
+ * set_skkserv disables it without changing composition or the local AI
+ * provider. */
 TgskkSkkserv *tgskk_skkserv_google_new(const char *executable, uint32_t wait_ms,
                                        char **error);
 TgskkSkkserv *tgskk_skkserv_custom_new(const char *host, uint16_t port,

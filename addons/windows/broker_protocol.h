@@ -7,7 +7,7 @@
 #include <stdexcept>
 
 namespace tgskk::windows {
-inline constexpr uint32_t wireMagic = 0x31424754, wireVersion = 1;
+inline constexpr uint32_t wireMagic = 0x31424754, wireVersion = 2;
 inline constexpr uint64_t keyBudget = 50, helloBudget = 3000;
 inline constexpr uint32_t reloadDeferred = 32;
 inline constexpr uint8_t asciiMode = 4;
@@ -33,7 +33,7 @@ struct Request {
   Op op = Op::Hello;
   uint64_t sequence = 1, deadline = 0, fingerprint = 0, generation = 0;
   uint32_t argument = 0, modifiers = 0, permissions = 0;
-  std::string context;
+  std::string context, right;
 };
 struct Candidate {
   std::string text, annotation;
@@ -152,6 +152,7 @@ inline std::vector<uint8_t> encode(const Request &q) {
   w.u32(q.modifiers);
   w.u32(q.permissions);
   w.string(q.context);
+  w.string(q.right);
   return std::move(w.data);
 }
 inline Request request(const std::vector<uint8_t> &bytes) {
@@ -170,9 +171,11 @@ inline Request request(const std::vector<uint8_t> &bytes) {
   q.modifiers = r.u32();
   q.permissions = r.u32();
   q.context = r.string();
+  q.right = r.string();
   r.end();
   if ((q.permissions & ~7U) || q.context.size() > 4096 ||
-      (!(q.permissions & 1) && !q.context.empty()))
+      q.right.size() > 4096 ||
+      (!(q.permissions & 1) && (!q.context.empty() || !q.right.empty())))
     throw std::runtime_error("Invalid request permissions");
   return q;
 }

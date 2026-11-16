@@ -422,7 +422,7 @@ public:
     try {
       if (q.op == Op::Hello) {
         if (sessions.contains(job.client.get()) || q.sequence != 1 ||
-            q.permissions || !q.context.empty())
+            q.permissions || !q.context.empty() || !q.right.empty())
           throw std::runtime_error("Invalid hello");
         auto engine = settings(q.fingerprint);
         char *error = nullptr;
@@ -457,11 +457,12 @@ public:
         if (foreground != job.client.get()) {
           if (auto previous = sessions.find(foreground);
               previous != sessions.end())
-            tgskk_session_context(previous->second->input, "", 0);
+            tgskk_session_context(previous->second->input, "", "", 0);
           foreground = job.client.get();
         }
         const bool active = (q.permissions & 4) != 0;
         tgskk_session_context(session.input, active ? q.context.c_str() : "",
+                              active ? q.right.c_str() : "",
                               active && (q.permissions & 1));
         bool network = active && (q.permissions & 2);
         auto modifiers = q.modifiers;
@@ -496,7 +497,7 @@ public:
       } else if (q.op == Op::Reset || q.op == Op::Mode) {
         if (q.op == Op::Mode && q.argument > 4)
           throw std::runtime_error("Invalid input mode");
-        tgskk_session_context(session.input, "", 0);
+        tgskk_session_context(session.input, "", "", 0);
         tgskk_session_network_allowed(session.input, 0);
         view = q.op == Op::Reset
                    ? tgskk_session_reset(session.input)

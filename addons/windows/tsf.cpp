@@ -1478,7 +1478,7 @@ public:
       release(range);
       return TF_E_DISCONNECTED;
     }
-    session->context("", false, false);
+    session->context("", "", false, false);
     bool networkAllowed = false;
     bool localAi = false;
     if (!reset) {
@@ -1534,11 +1534,29 @@ public:
         if (!surrounding.empty() && surrounding.back() >= 0xd800 &&
             surrounding.back() <= 0xdbff)
           surrounding.pop_back();
+        ITfRange *right = nullptr;
+        std::wstring following;
+        if (SUCCEEDED(range->Clone(&right))) {
+          LONG moved = 0;
+          if (SUCCEEDED(right->Collapse(cookie, TF_ANCHOR_END)) &&
+              SUCCEEDED(right->ShiftEnd(cookie, 32, &moved, nullptr))) {
+            wchar_t text[32];
+            ULONG count = 0;
+            if (SUCCEEDED(right->GetText(cookie, 0, text, 32, &count)))
+              following.assign(text, count);
+          }
+          release(right);
+        }
+        following = following.substr(0, following.find_first_of(L"\r\n"));
+        if (!following.empty() && following.back() >= 0xd800 &&
+            following.back() <= 0xdbff)
+          following.pop_back();
         if (!currentInput()) {
           release(range);
           return TF_E_DISCONNECTED;
         }
-        session->context(utf8(surrounding), true, networkAllowed);
+        session->context(utf8(surrounding), utf8(following), true,
+                         networkAllowed);
       }
     }
     if (!currentInput()) {

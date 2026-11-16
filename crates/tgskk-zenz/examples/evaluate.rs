@@ -30,9 +30,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("Invalid case row".into());
         }
         let candidates: Vec<_> = fields[3].split('|').map(String::from).collect();
-        evaluator.score(fields[0], "", &[])?;
+        evaluator.score(fields[0], "", "", &[])?;
         let start = Instant::now();
-        let scores = evaluator.score(fields[0], fields[1], &candidates)?;
+        let scores: Vec<_> = evaluator
+            .score(fields[0], "", fields[1], &candidates)?
+            .into_iter()
+            .map(|(base, _)| base)
+            .collect();
         times.push(start.elapsed().as_secs_f64() * 1000.);
         let best = scores
             .iter()
@@ -82,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ] {
             let mut input = InputSession::with_dictionaries(vec![dictionary.clone()])?;
             let assistance = Assistance::attach(&mut input, worker.clone());
-            assistance.context(context, true);
+            assistance.context(context, "", true);
             for name in trace.split_whitespace() {
                 let event: CskkKeyEvent = name.parse()?;
                 let start = Instant::now();
