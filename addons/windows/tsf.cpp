@@ -678,12 +678,13 @@ class Service final : public ITfTextInputProcessorEx,
     if (!modePopup)
       return;
     SetWindowTextW(modePopup, label.c_str());
-    SIZE extent{};
+    SIZE extent{}, wideGlyph{};
     HFONT font = messageFont();
     if (HDC dc = GetDC(modePopup)) {
       HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
       GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()),
                             &extent);
+      GetTextExtentPoint32W(dc, L"\u3042", 1, &wideGlyph);
       if (previous)
         SelectObject(dc, previous);
       ReleaseDC(modePopup, dc);
@@ -691,8 +692,9 @@ class Service final : public ITfTextInputProcessorEx,
     if (font)
       DeleteObject(font);
     constexpr int padding = 6, border = 2;
-    const int width = extent.cx + 2 * padding + border,
-              height = extent.cy + 2 * padding + border;
+    const int side = static_cast<int>(
+        std::max({extent.cx, extent.cy, wideGlyph.cx, wideGlyph.cy}) +
+        2 * padding + border);
     int x = caret.left, y = caret.bottom;
     MONITORINFO monitor{};
     monitor.cbSize = sizeof(monitor);
@@ -700,15 +702,15 @@ class Service final : public ITfTextInputProcessorEx,
                                          MONITOR_DEFAULTTONEAREST),
                         &monitor)) {
       const RECT &work = monitor.rcWork;
-      if (caret.bottom + height > work.bottom)
-        y = static_cast<int>(caret.top) - height;
+      if (caret.bottom + side > work.bottom)
+        y = static_cast<int>(caret.top) - side;
       x = std::min(std::max(x, static_cast<int>(work.left)),
-                   static_cast<int>(work.right) - width);
+                   static_cast<int>(work.right) - side);
       y = std::min(std::max(y, static_cast<int>(work.top)),
-                   static_cast<int>(work.bottom) - height);
+                   static_cast<int>(work.bottom) - side);
     }
     InvalidateRect(modePopup, nullptr, TRUE);
-    SetWindowPos(modePopup, HWND_TOPMOST, x, y, width, height,
+    SetWindowPos(modePopup, HWND_TOPMOST, x, y, side, side,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     if (!SetTimer(modePopup, modePopupTimer, 700, nullptr)) {
       reportFailure("start mode popup timer",

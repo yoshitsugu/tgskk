@@ -162,7 +162,10 @@ static void render(IBusEngine *engine, const TgskkView *view) {
         PROP_STATE_UNCHECKED, nullptr);
     ibus_engine_update_property(engine, property);
     if (resources->config.indicator && s.focused && !length && !s.list) {
-      const auto label = " " + std::string(view->mode_label) + " ";
+      const char *space = g_unichar_iswide(g_utf8_get_char(view->mode_label))
+                              ? "\u2005"
+                              : "\u2002";
+      const auto label = space + std::string(view->mode_label) + space;
       auto *text = ibus_text_new_from_string(label.c_str());
       const auto end = g_utf8_strlen(label.c_str(), -1);
       const auto colors = tgskk::modeColors(view->mode_label);
