@@ -8,6 +8,7 @@
 #include <exception>
 #include <functional>
 #include <inputscope.h>
+#include <iterator>
 #include <memory>
 #include <msctf.h>
 #include <stdexcept>
@@ -110,6 +111,9 @@ public:
   bool scopeFailure = false;
   std::shared_ptr<std::function<void()>> scopeRead =
       std::make_shared<std::function<void()>>();
+  std::shared_ptr<std::function<void()>> textExtRead =
+      std::make_shared<std::function<void()>>();
+  RECT textExt{0, 0, 10, 20};
   ULONG endedCompositions = 0, startedCompositions = 0;
   HWND window = nullptr;
   ~Store() {
@@ -346,7 +350,9 @@ public:
   }
   HRESULT STDMETHODCALLTYPE GetTextExt(TsViewCookie, LONG, LONG, RECT *rect,
                                        BOOL *clipped) override {
-    *rect = {0, 0, 10, 20};
+    if (auto callback = std::exchange(*textExtRead, {}))
+      callback();
+    *rect = textExt;
     *clipped = FALSE;
     return S_OK;
   }
@@ -423,6 +429,31 @@ void pump() {
     }
     Sleep(2);
   }
+}
+struct PopupSearch {
+  const wchar_t *label;
+  HWND window = nullptr;
+};
+BOOL CALLBACK findPopup(HWND window, LPARAM data) {
+  auto *search = reinterpret_cast<PopupSearch *>(data);
+  wchar_t className[16], text[32];
+  const int classLength =
+      GetClassNameW(window, className, static_cast<int>(std::size(className)));
+  const int textLength =
+      GetWindowTextW(window, text, static_cast<int>(std::size(text)));
+  if (classLength > 0 && textLength > 0 &&
+      std::wstring(className, static_cast<size_t>(classLength)) == L"STATIC" &&
+      std::wstring(text, static_cast<size_t>(textLength)) == search->label) {
+    search->window = window;
+    return FALSE;
+  }
+  return TRUE;
+}
+HWND findModePopup(const wchar_t *label) {
+  PopupSearch search{label};
+  EnumThreadWindows(GetCurrentThreadId(), findPopup,
+                    reinterpret_cast<LPARAM>(&search));
+  return search.window;
 }
 void idleEditingKeys(ITfKeyEventSink *keys, ITfContext *context, Store *store) {
   for (unsigned modifiers : {0u, 1u, 2u, 3u}) {
@@ -973,6 +1004,15 @@ int run(int argc, char **argv) {
     setControl(conversionCompartmentId,
                IME_CMODE_ROMAN | IME_CMODE_NATIVE | IME_CMODE_FULLSHAPE);
     require(key('L'), "enter ASCII mode");
+    const HWND popup = findModePopup(L"A");
+    require(popup && IsWindowVisible(popup), "mode popup was not shown");
+    const ULONGLONG popupDeadline = GetTickCount64() + 5000;
+    bool hidden = false;
+    while (!hidden && GetTickCount64() < popupDeadline) {
+      pump();
+      hidden = !IsWindowVisible(popup);
+    }
+    require(hidden, "mode popup ignored its timer");
     ITfCompartment *conversion = nullptr;
     require(SUCCEEDED(controlManager->GetCompartment(conversionCompartmentId,
                                                      &conversion)),
@@ -992,8 +1032,27 @@ int run(int argc, char **argv) {
             "ASCII keys started a composition");
     store->appInsert(L"aA ");
     require(key('J', false, false, true), "return from ASCII mode");
+    const HWND kanaPopup = findModePopup(L"あ");
+    require(kanaPopup && IsWindowVisible(kanaPopup),
+            "kana mode popup was not shown");
     require(key('A') && store->text == L"aA あ",
             "kana after ASCII passthrough");
+    require(!IsWindowVisible(kanaPopup), "mode popup stayed visible");
+    store->textExt = {0, 0, 0, 0};
+    require(key('L'), "ASCII mode with an empty caret rect");
+    require(!IsWindowVisible(popup), "mode popup ignored an empty caret rect");
+    store->textExt = {0, 0, 10, 20};
+    setControl(conversionCompartmentId,
+               IME_CMODE_ROMAN | IME_CMODE_NATIVE | IME_CMODE_FULLSHAPE);
+    *store->textExtRead = [&] {
+      setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 0, false);
+    };
+    require(key('L'), "ASCII mode while the input mode turns off");
+    require(!IsWindowVisible(popup),
+            "mode popup was shown after popups were hidden");
+    setControl(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1);
+    setControl(conversionCompartmentId,
+               IME_CMODE_ROMAN | IME_CMODE_NATIVE | IME_CMODE_FULLSHAPE);
     store->replace(L"");
     pump();
     require(key('K', true), "uppercase kana rejected");

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../common/candidates.h"
+#include "../common/mode_colors.h"
 #include "broker_client.h"
 #include "input_scope.h"
 #include "ime_controls.h"
@@ -215,6 +216,62 @@ public:
   }
   HRESULT STDMETHODCALLTYPE DoEditSession(TfEditCookie) override;
 };
+constexpr UINT_PTR modePopupTimer = 1;
+
+HFONT messageFont() {
+  NONCLIENTMETRICSW metrics{};
+  metrics.cbSize = sizeof(metrics);
+  if (!SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics,
+                             0))
+    return nullptr;
+  return CreateFontIndirectW(&metrics.lfMessageFont);
+}
+COLORREF modeColor(uint32_t value) {
+  return RGB((value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF);
+}
+void paintModePopup(HWND hwnd) {
+  PAINTSTRUCT paint;
+  HDC dc = BeginPaint(hwnd, &paint);
+  if (!dc)
+    return;
+  wchar_t text[32];
+  const int length =
+      GetWindowTextW(hwnd, text, static_cast<int>(std::size(text)));
+  const auto count = length > 0 ? static_cast<size_t>(length) : 0;
+  COLORREF background, foreground, border;
+  if (highContrastEnabled()) {
+    background = GetSysColor(COLOR_WINDOW);
+    foreground = GetSysColor(COLOR_WINDOWTEXT);
+    border = GetSysColor(COLOR_WINDOWFRAME);
+  } else {
+    const auto colors = tgskk::modeColors(utf8(std::wstring(text, count)));
+    background = modeColor(colors.background);
+    foreground = modeColor(colors.foreground);
+    border = modeColor(colors.border);
+  }
+  RECT area{};
+  GetClientRect(hwnd, &area);
+  HBRUSH fill = CreateSolidBrush(background), frame = CreateSolidBrush(border);
+  if (fill) {
+    FillRect(dc, &area, fill);
+    DeleteObject(fill);
+  }
+  if (frame) {
+    FrameRect(dc, &area, frame);
+    DeleteObject(frame);
+  }
+  HFONT font = messageFont();
+  HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
+  SetTextColor(dc, foreground);
+  SetBkMode(dc, TRANSPARENT);
+  DrawTextW(dc, text, length, &area,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+  if (previous)
+    SelectObject(dc, previous);
+  if (font)
+    DeleteObject(font);
+  EndPaint(hwnd, &paint);
+}
 class Service final : public ITfTextInputProcessorEx,
                       public ITfKeyEventSink,
                       public ITfCompositionSink,
@@ -302,6 +359,8 @@ class Service final : public ITfTextInputProcessorEx,
   std::unique_ptr<tgskk::windows::Input> session;
   uint64_t inputEpoch = 0;
   HWND candidates = nullptr;
+  HWND modePopup = nullptr;
+  uint64_t popupGeneration = 0;
   HRESULT finish(TfEditCookie cookie) {
     if (!composition)
       return S_OK;
@@ -604,11 +663,73 @@ class Service final : public ITfTextInputProcessorEx,
           reportFailure("publish reset mode", result);
       }
     }
-    hideCandidates();
+    hideInputPopups();
   }
-  void hideCandidates() {
+  void hideInputPopups() {
+    ++popupGeneration;
     if (candidates)
       ShowWindow(candidates, SW_HIDE);
+    if (modePopup) {
+      KillTimer(modePopup, modePopupTimer);
+      ShowWindow(modePopup, SW_HIDE);
+    }
+  }
+  void showModePopup(const std::wstring &label, const RECT &caret) {
+    if (!modePopup)
+      return;
+    SetWindowTextW(modePopup, label.c_str());
+    SIZE extent{};
+    HFONT font = messageFont();
+    if (HDC dc = GetDC(modePopup)) {
+      HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
+      GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()),
+                            &extent);
+      if (previous)
+        SelectObject(dc, previous);
+      ReleaseDC(modePopup, dc);
+    }
+    if (font)
+      DeleteObject(font);
+    constexpr int padding = 6, border = 2;
+    const int width = extent.cx + 2 * padding + border,
+              height = extent.cy + 2 * padding + border;
+    int x = caret.left, y = caret.bottom;
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    if (GetMonitorInfoW(MonitorFromPoint(POINT{caret.left, caret.bottom},
+                                         MONITOR_DEFAULTTONEAREST),
+                        &monitor)) {
+      const RECT &work = monitor.rcWork;
+      if (caret.bottom + height > work.bottom)
+        y = static_cast<int>(caret.top) - height;
+      x = std::min(std::max(x, static_cast<int>(work.left)),
+                   static_cast<int>(work.right) - width);
+      y = std::min(std::max(y, static_cast<int>(work.top)),
+                   static_cast<int>(work.bottom) - height);
+    }
+    InvalidateRect(modePopup, nullptr, TRUE);
+    SetWindowPos(modePopup, HWND_TOPMOST, x, y, width, height,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (!SetTimer(modePopup, modePopupTimer, 700, nullptr)) {
+      reportFailure("start mode popup timer",
+                    HRESULT_FROM_WIN32(GetLastError()));
+      ShowWindow(modePopup, SW_HIDE);
+    }
+  }
+  static LRESULT CALLBACK modeWindow(HWND hwnd, UINT message, WPARAM argument,
+                                     LPARAM data, UINT_PTR, DWORD_PTR) {
+    if (message == WM_ERASEBKGND)
+      return 1;
+    if (message == WM_PAINT) {
+      paintModePopup(hwnd);
+      return 0;
+    }
+    if (message == WM_TIMER && argument == modePopupTimer) {
+      KillTimer(hwnd, modePopupTimer);
+      ShowWindow(hwnd, SW_HIDE);
+      return 0;
+    }
+    return DefSubclassProc(hwnd, message, argument, data);
   }
   const TgskkView *keyView(uint32_t symbol, uint32_t modifiers) {
     const auto *view = session->view();
@@ -854,6 +975,20 @@ public:
           !SetTimer(candidates, 1, 500, nullptr))
         reportFailure("watch input settings",
                       HRESULT_FROM_WIN32(GetLastError()));
+      modePopup = CreateWindowExW(
+          WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST, L"STATIC", L"",
+          WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, module, nullptr);
+      if (!modePopup) {
+        const HRESULT error = HRESULT_FROM_WIN32(GetLastError());
+        Deactivate();
+        return FAILED(error) ? error : E_FAIL;
+      }
+      if (!SetWindowSubclass(modePopup, modeWindow, 1,
+                             reinterpret_cast<DWORD_PTR>(this))) {
+        reportFailure("create mode popup", HRESULT_FROM_WIN32(GetLastError()));
+        DestroyWindow(modePopup);
+        modePopup = nullptr;
+      }
       result = initControls();
       if (FAILED(result)) {
         Deactivate();
@@ -881,6 +1016,10 @@ public:
     if (candidates) {
       KillTimer(candidates, 1);
       RemoveWindowSubclass(candidates, settingsWindow, 1);
+    }
+    if (modePopup) {
+      KillTimer(modePopup, modePopupTimer);
+      RemoveWindowSubclass(modePopup, modeWindow, 1);
     }
     bool ended = abandon();
     uninitControls();
@@ -922,6 +1061,9 @@ public:
     if (candidates)
       DestroyWindow(candidates);
     candidates = nullptr;
+    if (modePopup)
+      DestroyWindow(modePopup);
+    modePopup = nullptr;
     session.reset();
     ++inputEpoch;
     traceCount("deactivate completed", refs.load(), "references");
@@ -1477,7 +1619,8 @@ public:
     const TgskkView snapshot = *view;
     view = &snapshot;
     std::wstring committed = wide(view->committed),
-                 preedit = wide(view->preedit);
+                 preedit = wide(view->preedit),
+                 modeLabel = wide(view->mode_label);
     HRESULT result = S_OK;
     if (reset) {
       if (!fresh)
@@ -1485,7 +1628,7 @@ public:
       if (SUCCEEDED(result)) {
         result = finish(cookie);
       }
-      hideCandidates();
+      hideInputPopups();
     } else {
       std::wstring combined = committed + preedit;
       bool changed = !combined.empty() || !fresh;
@@ -1531,11 +1674,12 @@ public:
         TF_SELECTION selection{range, {TF_AE_NONE, FALSE}};
         result = context->SetSelection(cookie, 1, &selection);
       }
-      hideCandidates();
+      hideInputPopups();
       if (!currentInput())
         result = TF_E_DISCONNECTED;
-      if (SUCCEEDED(result) && candidates && view->selecting &&
-          view->selected >= inlineCandidates) {
+      const bool listing =
+          view->selecting && view->selected >= inlineCandidates;
+      if (SUCCEEDED(result) && candidates && listing) {
         std::wstring text = view->zenz_applied ? L"AI-ranked\r\n" : L"";
         const size_t start =
             tgskk::candidatePageStart(view->selected, inlineCandidates);
@@ -1565,6 +1709,21 @@ public:
                     8),
                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
           }
+          release(viewport);
+        }
+      }
+      if (SUCCEEDED(result) && modeChanged && preedit.empty() && !listing &&
+          currentInput()) {
+        const auto generation = popupGeneration;
+        ITfContextView *viewport = nullptr;
+        if (SUCCEEDED(context->GetActiveView(&viewport))) {
+          RECT caret{};
+          BOOL clipped = FALSE;
+          if (SUCCEEDED(
+                  viewport->GetTextExt(cookie, range, &caret, &clipped)) &&
+              caret.bottom > caret.top && currentInput() &&
+              generation == popupGeneration)
+            showModePopup(modeLabel, caret);
           release(viewport);
         }
       }

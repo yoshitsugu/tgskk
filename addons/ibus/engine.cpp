@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine.h"
 #include "paths.h"
+#include "../common/mode_colors.h"
 #include <algorithm>
 #include <filesystem>
 #include <stdexcept>
-#include <string_view>
 
 namespace tgskk_ibus {
 std::unique_ptr<Resources> resources;
@@ -102,25 +102,6 @@ G_DEFINE_TYPE(TgskkEngine, tgskk_engine, IBUS_TYPE_ENGINE)
 static State &state(IBusEngine *engine) {
   return *reinterpret_cast<TgskkEngine *>(engine)->state;
 }
-struct ModeColors {
-  guint background;
-  guint foreground;
-};
-static ModeColors modeColors(std::string_view label) {
-  if (label == "ア") {
-    return {0x333C29, 0xF3F0E4};
-  }
-  if (label == "A") {
-    return {0xB8A779, 0x292D23};
-  }
-  if (label == "Ａ") {
-    return {0x5F3315, 0xF3F0E4};
-  }
-  if (label == "ｱ") {
-    return {0x465E73, 0xF3F0E4};
-  }
-  return {0x4F5838, 0xF3F0E4};
-}
 static void render(IBusEngine *engine, const TgskkView *view) {
   auto &s = state(engine);
   if (s.indicatorTimer) {
@@ -184,7 +165,7 @@ static void render(IBusEngine *engine, const TgskkView *view) {
       const auto label = " " + std::string(view->mode_label) + " ";
       auto *text = ibus_text_new_from_string(label.c_str());
       const auto end = g_utf8_strlen(label.c_str(), -1);
-      const auto colors = modeColors(view->mode_label);
+      const auto colors = tgskk::modeColors(view->mode_label);
       ibus_text_append_attribute(text, IBUS_ATTR_TYPE_BACKGROUND,
                                  colors.background, 0, end);
       ibus_text_append_attribute(text, IBUS_ATTR_TYPE_FOREGROUND,

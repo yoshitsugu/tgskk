@@ -27,7 +27,8 @@ modes and Settings. The half-width/full-width key toggles IME ON/OFF; dedicated
 IME ON and IME OFF keys are also supported. Windows compartment changes are
 synchronized with the input engine. Turning OFF cancels pending composition.
 ASCII mode passes ordinary printable keys directly to the application.
-Mode-switch commands still go through the input engine.
+Mode-switch commands still go through the input engine, which briefly shows the
+new mode in a popup near the caret.
 Unavailable optional InputScope metadata permits local dictionary input and local AI.
 Password/PIN/private scopes, malformed descriptors and operational query
 failures disable input.
