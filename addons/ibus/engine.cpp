@@ -114,7 +114,7 @@ static ModeColors modeColors(std::string_view label) {
     return {0xB8A779, 0x292D23};
   }
   if (label == "Ａ") {
-    return {0x79543A, 0xF3F0E4};
+    return {0x5F3315, 0xF3F0E4};
   }
   if (label == "ｱ") {
     return {0x465E73, 0xF3F0E4};
