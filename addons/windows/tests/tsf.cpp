@@ -442,7 +442,8 @@ BOOL CALLBACK findPopup(HWND window, LPARAM data) {
   const int textLength =
       GetWindowTextW(window, text, static_cast<int>(std::size(text)));
   if (classLength > 0 && textLength > 0 &&
-      std::wstring(className, static_cast<size_t>(classLength)) == L"STATIC" &&
+      CompareStringOrdinal(className, classLength, L"STATIC", -1, TRUE) ==
+          CSTR_EQUAL &&
       std::wstring(text, static_cast<size_t>(textLength)) == search->label) {
     search->window = window;
     return FALSE;
