@@ -59,8 +59,9 @@ It installs the x64 frontend, broker, settings app, large dictionary, verified
 AI model, Google helper and app-local Microsoft C++ runtime under Program Files.
 Add Japanese in Windows language settings if needed, then select tgskk as its
 input method. Compare the accompanying `SHA256SUMS` with `Get-FileHash` before
-installation. Signed previews are identified in their release notes. On Windows,
-use `Get-AuthenticodeSignature` on the setup EXE to verify its signature.
+installation. Check the release notes for signature status. Windows may warn
+about unsigned installers or block them. For signed releases, use
+`Get-AuthenticodeSignature` on the setup EXE to verify the signature.
 
 Before updating or removing tgskk, finish composition and sign out of Windows.
 Other signed-in users must also close applications using tgskk. Setup refuses
@@ -230,11 +231,10 @@ Interactive Windows 11 application testing is required before regular use.
 
 Push a tag named `windows-preview-vVERSION-COMMIT`, where VERSION matches the
 workspace version and COMMIT is the first 12 characters of the tagged commit ID.
-The Windows workflow builds the setup EXE, submits it to SignPath, and waits up
-to one hour for approval and signing. It checks the returned signature and tests
-installation, update and uninstall with the signed EXE. Release publication also
-requires the quality checks and verifies every release checksum. The prerelease
-contains separate installer, ZIP and complete source downloads.
+The Windows workflow builds and tests installation, update and uninstall with
+the EXE to be published. Release publication also requires the quality checks
+and verifies every release checksum. The prerelease contains separate installer,
+ZIP and complete source downloads.
 The release stays a draft until all files have been uploaded. Existing releases
 and the stable latest release are not replaced.
 
@@ -248,19 +248,18 @@ See the [Windows privacy policy](../../packaging/windows/privacy.en.txt)
 ([日本語](../../packaging/windows/privacy.ja.txt)) for how optional external
 lookup handles readings and how to disable it.
 
-Signing covers the setup EXE built on GitHub-hosted runners for Windows preview
-release tags. SignPath verifies the artifact's build origin and a tgskk release
+Windows previews are unsigned by default. If signing is enabled, it covers the
+setup EXE built on GitHub-hosted runners for Windows preview release tags.
+SignPath verifies the artifact's build origin and a tgskk release
 maintainer approves each request. The manual-registration ZIP, embedded binaries,
 and uninstaller do not receive a tgskk signature through this workflow.
 
-The workflow is configured for free code signing provided by SignPath.io, with a
-certificate by SignPath Foundation, subject to project approval.
-
-After [SignPath Foundation approval](https://signpath.org/), link the GitHub.com
+To enable signing with a public certificate, link the GitHub.com
 [trusted build system](https://docs.signpath.io/trusted-build-systems/github) to
 the `tgskk` project. Configure `release-signing` with origin verification, a public
 code-signing certificate, timestamping and manual approval. Import
 [`signpath.xml`](../../packaging/windows/signpath.xml) as `windows-installer`.
 Set the GitHub Actions variable `SIGNPATH_ORGANIZATION_ID` and secret
-`SIGNPATH_API_TOKEN` for the SignPath submitter. Approve the request in SignPath
-when the release workflow reaches the signing step.
+`SIGNPATH_API_TOKEN` for the SignPath submitter, then set the repository variable
+`WINDOWS_PREVIEW_SIGNING` to `true`. Approve the request in SignPath within one
+hour. The workflow stops publication if signing or signature verification fails.

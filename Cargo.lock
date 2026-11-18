@@ -834,14 +834,14 @@ dependencies = [
 
 [[package]]
 name = "tgskk-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tgskk-core",
 ]
 
 [[package]]
 name = "tgskk-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cskk",
  "tempfile",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "tgskk-ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tempfile",
  "tgskk-core",
@@ -859,11 +859,11 @@ dependencies = [
 
 [[package]]
 name = "tgskk-process"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "tgskk-skkserv"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "encoding_rs",
  "tgskk-process",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "tgskk-zenz"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tempfile",
  "tgskk-core",

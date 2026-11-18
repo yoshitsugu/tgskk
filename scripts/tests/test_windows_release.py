@@ -1,7 +1,10 @@
 import hashlib
 import importlib.util
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import tomllib
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'prepare-windows-release.py'
@@ -9,7 +12,8 @@ spec = importlib.util.spec_from_file_location('windows_release', SCRIPT)
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 REVISION = 'a' * 40
-TAG = 'windows-preview-v0.1.0-' + REVISION[:12]
+VERSION = tomllib.loads((release.ROOT / 'Cargo.toml').read_text())['workspace']['package']['version']
+TAG = f'windows-preview-v{VERSION}-{REVISION[:12]}'
 
 
 class WindowsRelease(unittest.TestCase):
@@ -17,8 +21,8 @@ class WindowsRelease(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.names = ['tgskk-0.1.0-windows-x64-setup.exe',
-                      'tgskk-0.1.0-windows-x64.zip', 'tgskk-source.tar.gz',
+        self.names = [f'tgskk-{VERSION}-windows-x64-setup.exe',
+                      f'tgskk-{VERSION}-windows-x64.zip', 'tgskk-source.tar.gz',
                       'llama-' + 'b' * 40 + '.tar.gz']
         for name in self.names:
             (self.root / name).write_bytes(name.encode())
@@ -38,11 +42,22 @@ class WindowsRelease(unittest.TestCase):
         for separator in ('  ./', '  ', ' *./', ' *'):
             with self.subTest(separator=separator):
                 manifest.write_text(original.replace('  ./', separator))
-                self.assertEqual(self.verify(), '0.1.0')
+                self.assertEqual(self.verify(), VERSION)
+
+    def test_release_notes_report_the_signing_status(self):
+        notes = self.root / 'notes.md'
+        for signing, expected in [('signed', 'セットアップEXEはAuthenticode署名付きです。'),
+                                  ('unsigned', 'セットアップEXEは未署名です。')]:
+            with self.subTest(signing=signing):
+                subprocess.run([sys.executable, str(SCRIPT), '--directory', str(self.root),
+                                '--notes', str(notes), '--tag', TAG, '--revision',
+                                REVISION, '--signing', signing], check=True)
+                self.assertIn(expected, notes.read_text(encoding='utf-8'))
+                notes.unlink()
 
     def test_rejects_mismatched_tag_revision_and_version(self):
-        for tag, revision in [('v0.1.0', REVISION), (TAG, 'b' * 40),
-                              (TAG, 'a' * 12), (TAG.replace('0.1.0', '0.1.1'), REVISION)]:
+        for tag, revision in [(f'v{VERSION}', REVISION), (TAG, 'b' * 40),
+                              (TAG, 'a' * 12), (f'windows-preview-v999.999.999-{REVISION[:12]}', REVISION)]:
             with self.subTest(tag=tag, revision=revision), self.assertRaises(ValueError):
                 release.verify(self.root, tag, revision)
 

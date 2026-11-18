@@ -1,7 +1,7 @@
 pkgbase = tgskk-git
 	pkgdesc = SKK input method with local AI ranking and Google fallback
-	pkgver = 0.1.0
-	pkgrel = 2
+	pkgver = 0.2.0
+	pkgrel = 1
 	url = https://github.com/yoshitsugu/tgskk
 	arch = x86_64
 	license = GPL-3.0-or-later
@@ -16,6 +16,9 @@ pkgbase = tgskk-git
 	makedepends = dbus
 	makedepends = python>=3.12
 	makedepends = skk-jisyo
+	makedepends = gtk3
+	makedepends = xorg-server-xvfb
+	makedepends = xorg-xauth
 	options = !debug
 	options = !lto
 	source = tgskk::git+https://github.com/yoshitsugu/tgskk.git
@@ -27,21 +30,22 @@ pkgname = tgskk-common-git
 	depends = glibc
 	depends = python>=3.12
 	depends = skk-jisyo
-	provides = tgskk-common=0.1.0
+	provides = tgskk-common=0.2.0
 	conflicts = tgskk-common
 
 pkgname = tgskk-git
 	pkgdesc = SKK input method for fcitx5 with local context ranking
 	depends = fcitx5>=5.1.7
 	depends = libxkbcommon
-	depends = tgskk-common-git=0.1.0-2
+	depends = tgskk-common-git=0.2.0-1
 	provides = tgskk
 	conflicts = tgskk
 
 pkgname = tgskk-ibus-git
 	pkgdesc = SKK input method for IBus with local context ranking
 	depends = ibus>=1.5.26
+	depends = gtk3
 	depends = libxkbcommon
-	depends = tgskk-common-git=0.1.0-2
+	depends = tgskk-common-git=0.2.0-1
 	provides = tgskk-ibus
 	conflicts = tgskk-ibus

@@ -2,8 +2,8 @@
 # shellcheck shell=bash disable=SC2034,SC2154
 pkgbase=tgskk-git
 pkgname=('tgskk-common-git' 'tgskk-git' 'tgskk-ibus-git')
-pkgver=0.1.0
-pkgrel=2
+pkgver=0.2.0
+pkgrel=1
 pkgdesc='SKK input method with local AI ranking and Google fallback'
 arch=('x86_64')
 url='https://github.com/yoshitsugu/tgskk'
@@ -17,7 +17,7 @@ sha256sums=('SKIP')
 pkgver() {
   cd "$srcdir/tgskk" || return
   if [[ -d .git ]]; then
-    printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    printf '%s.r%s.g%s' "$pkgver" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
   else
     printf '%s' "$pkgver"
   fi

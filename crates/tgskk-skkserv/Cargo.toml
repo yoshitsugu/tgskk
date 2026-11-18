@@ -9,7 +9,7 @@ rust-version.workspace = true
 encoding_rs = "0.8"
 
 [target.'cfg(any(unix, windows))'.dependencies]
-tgskk-process = { path = "../tgskk-process", version = "0.1.0" }
+tgskk-process = { path = "../tgskk-process", version = "0.2.0" }
 
 [lints]
 workspace = true

@@ -23,7 +23,7 @@ IBus版だけを入れる場合、fcitx5は依存として要求しません。
 ```sh
 # Ubuntu 24.04の例
 sha256sum --ignore-missing --check SHA256SUMS
-tar -xzf tgskk-v0.1.0-ubuntu-24.04-x86_64.tar.gz
+tar -xzf tgskk-v0.2.0-ubuntu-24.04-x86_64.tar.gz
 ```
 
 その後、下記のインストール手順で共通パッケージと使用するフロントエンドを導入します。

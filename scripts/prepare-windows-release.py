@@ -49,13 +49,19 @@ def main():
     parser.add_argument('--directory', type=Path, default=Path('build/windows-release'))
     parser.add_argument('--tag', required=True)
     parser.add_argument('--revision', required=True)
+    parser.add_argument('--signing', choices=('signed', 'unsigned'), required=True)
     parser.add_argument('--notes', type=Path, default=Path('build/windows-release-notes.md'))
     args = parser.parse_args()
     version = verify(args.directory, args.tag, args.revision)
+    signing_notice = (
+        'セットアップEXEはAuthenticode署名付きです。'
+        if args.signing == 'signed' else
+        'セットアップEXEは未署名です。Windowsが実行時に警告を表示したり、実行をブロックしたりする場合があります。'
+    )
     args.notes.parent.mkdir(parents=True, exist_ok=True)
     args.notes.write_text(
         f'Windows x64向けの試用版です（v{version}、コミット `{args.revision}`）。'
-        'セットアップEXEはAuthenticode署名付きです。\n\n'
+        f'{signing_notice}\n\n'
         f'通常の導入には **`tgskk-{version}-windows-x64-setup.exe`だけ**をダウンロードしてください。'
         '辞書・AIモデル・設定GUIを同梱しています。GitHubへのログインは不要です。\n\n'
         '1. `SHA256SUMS`とPowerShellの`Get-FileHash`でインストーラーのSHA256を照合します。\n'

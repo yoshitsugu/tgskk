@@ -1,3 +1,10 @@
+tgskk (0.2.0-1) unstable; urgency=medium
+
+  * Add settings dialogs for fcitx5 and IBus.
+  * Use text on both sides of the cursor for local candidate ranking.
+
+ -- yoshitsugu <yoshitsugu@users.noreply.github.com>  Wed, 18 Nov 2026 09:30:58 +0000
+
 tgskk (0.1.0-2) unstable; urgency=medium
 
   * Add IBus support and split shared tools from frontend packages.

@@ -10,7 +10,7 @@ name = "tgskk"
 path = "src/main.rs"
 
 [dependencies]
-tgskk-core = { path = "../tgskk-core", version = "0.1.0" }
+tgskk-core = { path = "../tgskk-core", version = "0.2.0" }
 
 [lints]
 workspace = true

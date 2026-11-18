@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(fcitx5-tgskk VERSION 0.1.0 LANGUAGES CXX)
+project(fcitx5-tgskk VERSION 0.2.0 LANGUAGES CXX)
 
 find_package(Fcitx5Core 5.1.7 REQUIRED)
 if(Fcitx5Core_VERSION VERSION_GREATER_EQUAL 5.1.9)
