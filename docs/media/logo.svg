@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <polyline points="80,530 150,436 220,530" fill="none" stroke="#000" stroke-width="28" stroke-linejoin="round" stroke-miterlimit="10"/>
+      <polyline points="804,452 874,546 944,452" fill="none" stroke="#000" stroke-width="28" stroke-linejoin="round" stroke-miterlimit="10"/>
+    </mask>
+  </defs>
+  <circle cx="512" cy="512" r="446" fill="#B8A779"/>
+  <circle cx="512" cy="512" r="398" fill="#F3F0E4"/>
+  <g mask="url(#cut)" fill="#4F5838">
+    <circle cx="512" cy="512" r="362" fill="none" stroke="#4F5838" stroke-width="72"/>
+    <rect x="476" y="150" width="72" height="410" rx="22"/>
+    <rect x="476" y="578" width="404" height="72" rx="22"/>
+    <rect x="476" y="578" width="72" height="148" rx="22"/>
+  </g>
+</svg>

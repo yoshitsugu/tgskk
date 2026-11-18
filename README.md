@@ -1,3 +1,5 @@
+<img src="docs/media/logo.svg" alt="tgskkのロゴ" width="128">
+
 # tgskk
 
 ローカルAIを用いた変換候補順位入れ替え機能付きのSKKです。
