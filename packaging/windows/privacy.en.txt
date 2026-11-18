@@ -1,0 +1,14 @@
+﻿tgskk for Windows Privacy Policy
+
+When Google lookup is enabled and the local dictionary has no candidates, tgskk sends the reading being converted (such as hiragana) to Google's transliteration service over HTTPS.
+tgskk displays the results in its candidate list.
+See the Google Privacy Policy (https://policies.google.com/privacy) for how Google handles that data.
+
+To opt out at installation, clear "Use Google to look up readings" on the Select Additional Tasks page.
+Setup's choice sets the default for Windows users without a per-user SKK server setting.
+Saving any settings in "tgskk settings" also saves the current SKK server setting for that user, which takes precedence over the setup default.
+To opt out after installation, open "tgskk settings" from the Start menu, select "Disabled" in the SKK server ("SKKサーバ") field, save, then sign out of Windows and sign back in.
+Repeat these steps for each Windows user who wants to opt out.
+
+The local dictionary, learned entries, and AI candidate ranking are processed on your device.
+If you select "Custom" as the SKK server mode, tgskk sends readings to the server you configure to retrieve candidates.

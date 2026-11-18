@@ -23,6 +23,8 @@ Linuxのfcitx5 / IBusに対応しています。
 
 [Releases](https://github.com/yoshitsugu/tgskk/releases)から取得できます。
 導入手順は[Linux用パッケージ](docs/distribution.md#インストール)、[Windows版](addons/windows/README.md)を参照してください。
+Windowsインストーラーの署名については[Code signing policy](addons/windows/README.md#code-signing-policy)を参照してください。
+Windowsでの外部送信と無効化の手順は[プライバシーポリシー](packaging/windows/privacy.ja.txt)を参照してください。
 IBus版のソースビルドは[IBusガイド](docs/ibus.md)に記載しています。
 
 辞書・文脈補助・SKK serverの設定、復旧手順、CLIの使い方は[利用ガイド](docs/usage.md)を参照してください。

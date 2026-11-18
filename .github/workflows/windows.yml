@@ -11,7 +11,10 @@ concurrency:
 jobs:
   worker:
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')) && 120 || 30 }}
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -102,6 +105,7 @@ jobs:
             --llama-source build/llama.cpp-52e53a76df0298d2c316ae7e704eeec03b0bf478 --output build/windows-package --vendor build/windows-source/vendor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build installer
+        id: installer
         shell: pwsh
         run: |
           $version = (Select-String '^version = "([^"]+)"' Cargo.toml).Matches[0].Groups[1].Value
@@ -109,6 +113,45 @@ jobs:
           & $compiler "/DPayload=$pwd/build/windows-package/payload" "/DAppVersion=$version" `
             "/DOutput=$pwd/build/windows-package" packaging/windows/tgskk.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "filename=tgskk-$version-windows-x64-setup.exe" >> $env:GITHUB_OUTPUT
+      - name: Upload installer for signing
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+        id: unsigned-installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: unsigned-installer-for-signing
+          path: build/windows-package/${{ steps.installer.outputs.filename }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Sign Windows preview installer
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: tgskk
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-installer
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: build/windows-signed
+          parameters: |
+            version: ${{ toJSON(steps.installer.outputs.version) }}
+      - name: Verify and stage signed installer
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/windows-preview-')
+        shell: pwsh
+        env:
+          INSTALLER_FILENAME: ${{ steps.installer.outputs.filename }}
+        run: |
+          $signed = Join-Path build/windows-signed $env:INSTALLER_FILENAME
+          $signature = Get-AuthenticodeSignature -LiteralPath $signed
+          if ($signature.Status -ne 'Valid' -or !$signature.TimeStamperCertificate) {
+            throw "Installer requires a valid timestamped Authenticode signature: $($signature.StatusMessage)"
+          }
+          Move-Item -LiteralPath $signed -Destination (Join-Path build/windows-package $env:INSTALLER_FILENAME) -Force
       - name: Test install, update and uninstall
         shell: pwsh
         run: |

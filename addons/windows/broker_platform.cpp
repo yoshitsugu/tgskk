@@ -316,6 +316,10 @@ static Config parseConfig(const std::wstring &directory,
   c.home = canonicalPath(directory);
   c.broker = canonicalPath(program);
   const auto sibling = std::filesystem::path(c.broker).parent_path();
+  const auto defaults = sibling / L"windows-defaults.ini";
+  if (GetPrivateProfileIntW(L"General", L"GoogleLookup", 1, defaults.c_str()) ==
+      0)
+    c.server = "Disabled";
   c.dictionary = (sibling / L"SKK-JISYO.L").wstring();
   c.userDictionary =
       (std::filesystem::path(c.home) / L"SKK-JISYO.user").wstring();
@@ -418,8 +422,9 @@ static Config parseConfig(const std::wstring &directory,
         c.model = shared.wstring();
     }
   }
-  c.fingerprint = hash(configuration + utf8(c.dictionary) + utf8(c.worker) +
-                       utf8(c.model) + utf8(c.helper) + utf8(c.userDictionary));
+  c.fingerprint = hash(configuration + c.server + "\n" + utf8(c.dictionary) +
+                       utf8(c.worker) + utf8(c.model) + utf8(c.helper) +
+                       utf8(c.userDictionary));
   return c;
 }
 Config Config::load(const std::wstring &directory,

@@ -54,7 +54,8 @@ def main():
     version = verify(args.directory, args.tag, args.revision)
     args.notes.parent.mkdir(parents=True, exist_ok=True)
     args.notes.write_text(
-        f'Windows x64向けの未署名の試用版です（v{version}、コミット `{args.revision}`）。\n\n'
+        f'Windows x64向けの試用版です（v{version}、コミット `{args.revision}`）。'
+        'セットアップEXEはAuthenticode署名付きです。\n\n'
         f'通常の導入には **`tgskk-{version}-windows-x64-setup.exe`だけ**をダウンロードしてください。'
         '辞書・AIモデル・設定GUIを同梱しています。GitHubへのログインは不要です。\n\n'
         '1. `SHA256SUMS`とPowerShellの`Get-FileHash`でインストーラーのSHA256を照合します。\n'
@@ -65,7 +66,8 @@ def main():
         '手動登録用ZIPと、依存ライブラリを含むソースは別の添付ファイルです。'
         '通常のインストール時にソースをダウンロードする必要はありません。'
         '32bit・ARM64・管理者権限のアプリは対象外です。\n\n'
-        f'[導入・更新・削除の詳細](https://github.com/yoshitsugu/tgskk/blob/{args.revision}/addons/windows/README.md)\n',
+        f'[導入・更新・削除の詳細](https://github.com/yoshitsugu/tgskk/blob/{args.revision}/addons/windows/README.md)\n\n'
+        f'[Code signing policy](https://github.com/yoshitsugu/tgskk/blob/{args.revision}/addons/windows/README.md#code-signing-policy)\n',
         encoding='utf-8',
     )
 

@@ -34,6 +34,16 @@ int main() {
     std::filesystem::create_directories(directory);
     require(!config.skkservWithoutInputScope,
             "missing-scope server must default off");
+    require(config.server == "Google", "portable build server default");
+    const auto defaults = directory / L"bin" / L"windows-defaults.ini";
+    std::ofstream(defaults) << "[General]\nGoogleLookup=0\n";
+    const auto disabled = Config::load(directory.wstring(), config.broker);
+    require(disabled.server == "Disabled" &&
+                disabled.fingerprint != config.fingerprint,
+            "installer opt-out changes the effective configuration");
+    std::ofstream(directory / L"windows.ini") << "[General]\nSkkserv=Google\n";
+    require(Config::load(directory.wstring(), config.broker).server == "Google",
+            "saved user preference overrides the installer opt-out");
     std::ofstream(directory / L"SKK-JISYO.user", std::ios::binary)
         << "learned-dictionary";
     config.ai = false;

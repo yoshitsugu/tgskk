@@ -3,17 +3,23 @@ $ErrorActionPreference = 'Stop'
 $Installer = (Resolve-Path $Installer).Path
 $Payload = (Resolve-Path $Payload).Path
 $directory = Join-Path $env:ProgramFiles 'tgskk'
+$defaults = Join-Path $directory 'windows-defaults.ini'
 $configurationDirectory = Join-Path $env:LOCALAPPDATA 'tgskk'
 $registry = 'HKLM:\Software\Classes\CLSID\{C7993BD4-1094-4968-A311-3DB8A0E01739}\InprocServer32'
 if ((Test-Path $directory) -or (Test-Path $configurationDirectory) -or (Test-Path $registry)) {
   throw 'Installer test requires a clean, disposable Windows environment'
 }
 function Run-Installer {
-  $process = Start-Process $Installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+  param([string[]]$ExtraArguments = @())
+  $installerArguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') + $ExtraArguments
+  $process = Start-Process $Installer -ArgumentList $installerArguments -PassThru -Wait
   if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
 }
 try {
-  Run-Installer
+  Run-Installer -ExtraArguments '/MERGETASKS=!googlelookup'
+  if (!(Select-String -LiteralPath $defaults -Pattern '^GoogleLookup=0$' -Quiet)) {
+    throw 'Installer did not record the Google lookup opt-out'
+  }
   $registered = (Get-Item $registry).GetValue('')
   if ($registered -ne (Join-Path $directory 'tgskk-tip.dll')) { throw 'Incorrect TSF registration' }
   foreach ($name in @('tgskk-settings.exe','tgskk-zenz-worker.exe','tgskk-google-skkserv.exe','SKK-JISYO.L','models\zenz-v3.2-small-Q5_K_M.gguf')) {
@@ -35,6 +41,9 @@ try {
   $before = @{}
   Get-ChildItem $configurationDirectory -File | ForEach-Object { $before[$_.Name] = (Get-FileHash $_.FullName).Hash }
   Run-Installer
+  if (!(Select-String -LiteralPath $defaults -Pattern '^GoogleLookup=0$' -Quiet)) {
+    throw 'Upgrade changed the installer opt-out'
+  }
   foreach ($name in $before.Keys) {
     if ((Get-FileHash (Join-Path $configurationDirectory $name)).Hash -ne $before[$name]) { throw "Upgrade changed $name" }
   }
@@ -102,6 +111,7 @@ public static class TgskkWindowProbe {
   $removed = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$pwd/build/windows/uninstall.log" -PassThru -Wait
   if ($removed.ExitCode -ne 0) { throw "Uninstaller failed: $($removed.ExitCode)" }
   if (Test-Path $registry) { throw 'Uninstall retained TSF registration' }
+  if (Test-Path $defaults) { throw 'Uninstall retained Windows defaults' }
   foreach ($name in $before.Keys) {
     if ((Get-FileHash (Join-Path $configurationDirectory $name)).Hash -ne $before[$name]) { throw "Uninstall changed $name" }
   }

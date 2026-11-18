@@ -11,6 +11,8 @@
 AppId={{FE2BC384-949B-4DCC-AB60-40A41D5D8836}
 AppName=tgskk
 AppVersion={#AppVersion}
+VersionInfoProductName=tgskk
+VersionInfoProductTextVersion={#AppVersion}
 AppPublisher=tgskk contributors
 AppPublisherURL=https://github.com/yoshitsugu/tgskk
 DefaultDirName={autopf}\tgskk
@@ -29,8 +31,18 @@ RestartApplications=no
 LicenseFile={#Payload}\licenses\LICENSE
 UninstallDisplayName=tgskk
 [Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"; InfoBeforeFile: "privacy.en.txt"
+Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"; InfoBeforeFile: "privacy.ja.txt"
+[CustomMessages]
+english.GoogleLookup=Use Google to look up readings
+japanese.GoogleLookup=Google に読みを送信して変換候補を取得する
+[Tasks]
+Name: "googlelookup"; Description: "{cm:GoogleLookup}"
+[INI]
+Filename: "{app}\windows-defaults.ini"; Section: "General"; Key: "GoogleLookup"; String: "1"; Tasks: googlelookup
+Filename: "{app}\windows-defaults.ini"; Section: "General"; Key: "GoogleLookup"; String: "0"; Tasks: not googlelookup
+[UninstallDelete]
+Type: files; Name: "{app}\windows-defaults.ini"
 [Files]
 Source: "{#Payload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "tgskk-tip.dll"
 Source: "{#Payload}\tgskk-tip.dll"; DestDir: "{app}"; Flags: ignoreversion regserver
