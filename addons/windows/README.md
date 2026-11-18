@@ -39,8 +39,8 @@ does not override password/PIN/private scopes, malformed descriptors, operationa
 failures, or explicit unknown scope values. The settings window exposes the same
 option, disabled by default. Explicit unknown scope descriptors disable both
 forms of assistance.
-Only bounded text left of the caret is used for local AI; servers receive readings,
-never surrounding text.
+Local AI uses a bounded amount of text on both sides of the caret. External
+servers receive the reading being converted.
 
 ## Install
 
