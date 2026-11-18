@@ -629,7 +629,8 @@ int run(int argc, char **argv) {
   require(conversionCompartmentId ==
                   GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION &&
               languageBarId == GUID_LBI_INPUTMODE &&
-              systemTrayCategory == GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+              systemTrayCategory == GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT &&
+              immersiveCategory == GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
           "TSF compatibility GUIDs differ from Windows SDK");
 #endif
   const bool directKey = mode == "--direct-key";

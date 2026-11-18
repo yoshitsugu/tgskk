@@ -20,9 +20,14 @@ inline const GUID systemTrayCategory = {
     0x7bab,
     0x4bc1,
     {0x9c, 0x69, 0xcf, 0x81, 0x89, 0x0f, 0x0e, 0xf5}};
-inline const std::array<GUID, 3> registeredCategories = {
+inline const GUID immersiveCategory = {
+    0x13a016df,
+    0x560b,
+    0x46cd,
+    {0x94, 0x7a, 0x4c, 0x3a, 0xf1, 0xe0, 0xe3, 0x5d}};
+inline const std::array<GUID, 4> registeredCategories = {
     GUID_TFCAT_TIP_KEYBOARD, GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
-    systemTrayCategory};
+    systemTrayCategory, immersiveCategory};
 inline const GUID imeToggleId = {
     0xa8d5d721,
     0xbc04,
