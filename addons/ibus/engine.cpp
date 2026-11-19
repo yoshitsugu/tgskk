@@ -175,7 +175,10 @@ static void render(IBusEngine *engine, const TgskkView *view) {
       const char *space = g_unichar_iswide(g_utf8_get_char(view->mode_label))
                               ? "\u2005"
                               : "\u2002";
-      const auto label = space + std::string(view->mode_label) + space;
+      // ASCII A is wider than half-width kana in common panel fonts.
+      const char *trailing =
+          std::strcmp(view->mode_label, "A") == 0 ? "\u2004" : space;
+      const auto label = space + std::string(view->mode_label) + trailing;
       auto *text = ibus_text_new_from_string(label.c_str());
       const auto end = g_utf8_strlen(label.c_str(), -1);
       const auto colors = tgskk::modeColors(view->mode_label);
