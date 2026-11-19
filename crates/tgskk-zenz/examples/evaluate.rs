@@ -2,11 +2,26 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tgskk_core::input::{CskkDictionary, CskkKeyEvent, InputSession};
-use tgskk_zenz::{Assistance, Evaluator, Status, Worker};
+use tgskk_zenz::{Assistance, Evaluator, Score, Status, Worker};
 
 fn percentile(times: &mut [f64], percent: usize) -> f64 {
     times.sort_by(f64::total_cmp);
     times[((times.len() - 1) * percent).div_ceil(100)]
+}
+#[allow(clippy::cast_precision_loss)]
+fn rate(part: usize, whole: usize) -> String {
+    if whole == 0 {
+        "n/a".to_owned()
+    } else {
+        format!("{:.1}%", 100.0 * part as f64 / whole as f64)
+    }
+}
+fn base_argmax(scores: &[Score]) -> usize {
+    scores
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.0.total_cmp(&b.0))
+        .map_or(0, |(index, _)| index)
 }
 #[allow(clippy::arc_with_non_send_sync)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,41 +33,86 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut evaluator = Evaluator::open(Path::new(&args[0]), Path::new(&args[1]))?;
     let cases = std::fs::read_to_string(&args[2])?;
-    let mut correct = 0;
-    let mut total = 0;
     let mut times = Vec::new();
+    let mut dictionary_correct = 0;
+    let mut left_correct = 0;
+    let mut both_correct = 0;
+    let mut scorer_correct = 0;
+    let mut left_breaks = 0;
+    let mut both_breaks_dictionary = 0;
+    let mut both_breaks_left = 0;
+    let mut left_changes = 0;
+    let mut both_changes = 0;
+    let mut right_changes = 0;
+    let mut total = 0;
     for line in cases
         .lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
     {
         let fields: Vec<_> = line.split('\t').collect();
-        if fields.len() != 4 {
+        if fields.len() != 4 && fields.len() != 5 {
             return Err("Invalid case row".into());
         }
+        let (left, reading, expected) = (fields[0], fields[1], fields[2]);
+        let right = fields.get(4).copied().unwrap_or("");
         let candidates: Vec<_> = fields[3].split('|').map(String::from).collect();
-        evaluator.score(fields[0], "", "", &[])?;
+        evaluator.score(left, "", "", &[])?;
         let start = Instant::now();
-        let scores: Vec<_> = evaluator
-            .score(fields[0], "", fields[1], &candidates)?
-            .into_iter()
-            .map(|(base, _)| base)
-            .collect();
+        let left_scores = evaluator.score(left, "", reading, &candidates)?;
         times.push(start.elapsed().as_secs_f64() * 1000.);
-        let best = scores
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.total_cmp(b))
-            .unwrap()
-            .0;
+        let left_best = Evaluator::first_candidate(&left_scores);
+        let best = if right.is_empty() {
+            left_best
+        } else {
+            evaluator.score(left, right, "", &[])?;
+            let scores = evaluator.score(left, right, reading, &candidates)?;
+            Evaluator::first_candidate(&scores)
+        };
+        let dictionary_first = candidates[0].as_str();
+        let left_first = candidates[left_best].as_str();
+        let both_first = candidates[best].as_str();
+        let dictionary_right = dictionary_first == expected;
+        let left_right = left_first == expected;
+        let both_right = both_first == expected;
+        dictionary_correct += usize::from(dictionary_right);
+        left_correct += usize::from(left_right);
+        both_correct += usize::from(both_right);
+        scorer_correct += usize::from(candidates[base_argmax(&left_scores)] == expected);
+        left_breaks += usize::from(dictionary_right && !left_right);
+        both_breaks_dictionary += usize::from(dictionary_right && !both_right);
+        both_breaks_left += usize::from(left_right && !both_right);
+        left_changes += usize::from(left_first != dictionary_first);
+        both_changes += usize::from(both_first != dictionary_first);
+        right_changes += usize::from(both_first != left_first);
         total += 1;
-        correct += usize::from(candidates[best] == fields[2]);
         println!(
-            "{} + {} => {} (expected {}), scores={scores:?}",
-            fields[0], fields[1], candidates[best], fields[2]
+            "{left} + {reading} [right={right}] => dictionary={dictionary_first}, left={left_first}, left_right={both_first} (expected {expected}){}",
+            if both_first == left_first { "" } else { " *" }
         );
     }
+    if total == 0 {
+        return Err(format!("No evaluation cases in {}", args[2]).into());
+    }
     println!(
-        "scorer_accuracy={correct}/{total}, scoring_p50_ms={:.3}, scoring_p95_ms={:.3}",
+        "first_candidate: dictionary={dictionary_correct}/{total} ({}), left={left_correct}/{total} ({}), left_right={both_correct}/{total} ({})",
+        rate(dictionary_correct, total),
+        rate(left_correct, total),
+        rate(both_correct, total)
+    );
+    println!(
+        "candidate_changes: left={left_changes}/{total} ({}), left_right={both_changes}/{total} ({}), right_added={right_changes}/{total} ({})",
+        rate(left_changes, total),
+        rate(both_changes, total),
+        rate(right_changes, total)
+    );
+    println!(
+        "broken_correct: left_vs_dictionary={left_breaks}/{dictionary_correct} ({}), left_right_vs_dictionary={both_breaks_dictionary}/{dictionary_correct} ({}), left_right_vs_left={both_breaks_left}/{left_correct} ({})",
+        rate(left_breaks, dictionary_correct),
+        rate(both_breaks_dictionary, dictionary_correct),
+        rate(both_breaks_left, left_correct)
+    );
+    println!(
+        "scorer_accuracy={scorer_correct}/{total}, scoring_p50_ms={:.3}, scoring_p95_ms={:.3}",
         percentile(&mut times, 50),
         percentile(&mut times, 95)
     );

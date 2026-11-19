@@ -16,6 +16,8 @@ const MAX_CANDIDATES: usize = 8;
 const MAX_BYTES: usize = 1024;
 const CACHE_SIZE: usize = 16;
 const MIN_MARGIN: f64 = 1.5;
+// Overriding a confident left-context leader needs a wider margin.
+const REVERSAL_MARGIN: f64 = 2.1;
 // Measured: these improved ranking most without hurting left-context-only cases.
 const RIGHT_WEIGHT: f64 = 0.4;
 const RIGHT_CHARS: usize = 8;
@@ -496,15 +498,27 @@ pub fn mixed((base, right): Score) -> f64 {
 fn winner(scores: &[Score], protected: &[usize]) -> Option<usize> {
     let mixed: Vec<_> = scores.iter().copied().map(mixed).collect();
     let base: Vec<_> = scores.iter().map(|(base, _)| *base).collect();
-    // A confident mixed result that keeps the order must not fall back to base.
-    let first = confident_leader(&mixed).or_else(|| confident_leader(&base))?;
+    let first = match (leader(&base), leader(&mixed)) {
+        (Some((left, left_margin)), Some((combined, combined_margin)))
+            if left_margin >= MIN_MARGIN && combined != left =>
+        {
+            if combined_margin >= REVERSAL_MARGIN {
+                combined
+            } else {
+                left
+            }
+        }
+        (_, Some((combined, margin))) if margin >= MIN_MARGIN => combined,
+        (Some((left, margin)), _) if margin >= MIN_MARGIN => left,
+        _ => return None,
+    };
     (first != 0 && !protected.contains(&first)).then_some(first)
 }
-fn confident_leader(scores: &[f64]) -> Option<usize> {
+fn leader(scores: &[f64]) -> Option<(usize, f64)> {
     let mut indices: Vec<_> = (0..scores.len()).collect();
     indices.sort_by(|a, b| scores[*b].total_cmp(&scores[*a]));
     let first = *indices.first()?;
-    (scores[first] - scores[*indices.get(1)?] >= MIN_MARGIN).then_some(first)
+    Some((first, scores[first] - scores[*indices.get(1)?]))
 }
 #[derive(Clone)]
 pub struct Assistance(Rc<RefCell<State>>);
@@ -636,6 +650,11 @@ impl Evaluator {
             self.0 = None;
         }
         result
+    }
+    /// Evaluation entry for the live ranking with no protected candidates.
+    #[must_use]
+    pub fn first_candidate(scores: &[Score]) -> usize {
+        winner(scores, &[]).unwrap_or(0)
     }
 }
 
@@ -843,6 +862,34 @@ mod tests {
         assistance.context("駅で", "を", true);
         let req = request();
         ready(&assistance, &req, scores.to_vec());
+        assert_eq!(
+            assistance.0.borrow_mut().response(&req).order,
+            Some(vec![1, 0, 2, 3])
+        );
+    }
+    #[test]
+    fn right_context_must_beat_a_confident_left_leader_by_2_1() {
+        // The left leader is index 2 with the 1.5 margin; the right context lifts
+        // index 1 by only 1.6, so the left-context leader stays first.
+        assert_eq!(winner(&[(-6., 0.), (-4.5, 7.75), (-3., 0.)], &[]), Some(2));
+        // A mixed margin of exactly 2.0 is still too small for the reversal.
+        assert_eq!(winner(&[(-6., 0.), (-5., 10.), (-3., 0.)], &[]), Some(2));
+        // Exactly 2.1 admits it; the mixed scores are 0.0 and -2.1.
+        assert_eq!(winner(&[(-6., 0.), (-4., 10.), (-2.1, 0.)], &[]), Some(1));
+        // The same rule decides when the left leader is the dictionary head.
+        assert_eq!(winner(&[(-3., 0.), (-5., 9.)], &[]), None);
+        assert_eq!(winner(&[(-2.1, 0.), (-4., 10.)], &[]), Some(1));
+        // An ambiguous left context keeps the 1.5 margin for the right context.
+        assert_eq!(winner(&[(-9., 0.), (-5.2, 6.), (-4.4, 0.)], &[]), Some(1));
+        let mut input = input();
+        let assistance = Assistance::attach(&mut input, worker());
+        assistance.context("駅で", "に乗る", true);
+        let req = request();
+        ready(
+            &assistance,
+            &req,
+            [(-6., 0.), (-4., 10.), (-2.1, 0.), (-9., 0.)].to_vec(),
+        );
         assert_eq!(
             assistance.0.borrow_mut().response(&req).order,
             Some(vec![1, 0, 2, 3])
