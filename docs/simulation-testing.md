@@ -33,7 +33,10 @@ This follows the approach of [FoundationDB simulation testing](https://apple.git
 at the scoring-service boundary. It does not simulate OS scheduling, mutex
 interleavings, process supervision/backoff, real inference, file I/O or Windows
 TSF/COM. Native integration and thread-based tests remain necessary for those
-boundaries. It does not establish the stability of an already displayed candidate
-list: completion only writes the score cache, and this harness does not exercise
-later input operations on that list. More seeds cover more schedules; this is not
-exhaustive verification.
+boundaries. A separate fixed-order test displays dictionary-order candidates
+with Space, selects a non-first candidate, then completes the queued production
+job while the list is shown. It checks that the saved list and cursor are
+unchanged, that Return still commits the saved string, and that the late score
+would have reordered the list if applied earlier. Arbitrary key sequences on an
+already displayed list remain uncovered.
+More seeds cover more schedules; this is not exhaustive verification.

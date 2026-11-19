@@ -267,6 +267,77 @@ fn deterministic_scoring_schedules() {
 }
 
 #[test]
+fn delayed_completion_after_selection_keeps_the_displayed_list_and_commit() {
+    let worker = tests::worker();
+    let mut input = tests::input();
+    let assistance = Assistance::attach(&mut input, worker.clone());
+    assistance.context("駅で", "", true);
+    for key in ["K", "i", "s", "h", "a"] {
+        let _ = input.process_key(&CskkKeyEvent::from_string_representation(key).unwrap());
+    }
+    let request = input.preview_conversion().unwrap();
+    assistance.prefetch(&input);
+    let key = assistance.0.borrow().key(&request).unwrap();
+    let job = worker
+        .0
+        .queue
+        .pending
+        .lock()
+        .unwrap()
+        .take()
+        .expect("prefetch must queue a job");
+    assert_eq!(job.key, key, "queued job does not match the display");
+    assert!(job_is_ready(&worker.0.queue, &job).unwrap());
+    assert!(worker.ready(&key).is_none());
+
+    let _ = input.process_key(&CskkKeyEvent::from_string_representation("space").unwrap());
+    let displayed = input.candidates();
+    assert_eq!(
+        displayed, request.candidates,
+        "displayed list is not dictionary order"
+    );
+    assert!(displayed.len() > 1, "no non-first candidate");
+
+    let selected = 1;
+    let expected = &displayed[selected].text;
+    assert_ne!(
+        expected, &displayed[0].text,
+        "selected candidate must be non-first"
+    );
+    assert!(
+        input.select_candidate(selected).consumed,
+        "selection rejected"
+    );
+    let cursor = input.candidate_cursor();
+    assert_eq!(cursor, Some(selected), "wrong cursor after selection");
+    let mut scores = vec![(-6., 0.); job.key.candidates.len()];
+    scores[selected].0 = -0.2;
+    complete_job(&worker.0.queue, job, Ok(scores)).unwrap();
+    let cached = worker.ready(&key).expect("late score was not cached");
+    assert_eq!(
+        winner(&cached, &key.protected),
+        Some(selected),
+        "score does not reorder the list"
+    );
+
+    assert_eq!(
+        input.candidates(),
+        displayed,
+        "late score changed the displayed list"
+    );
+    assert_eq!(
+        input.candidate_cursor(),
+        cursor,
+        "late score moved the cursor"
+    );
+    let outcome = input.process_key(&CskkKeyEvent::from_string_representation("Return").unwrap());
+    assert_eq!(
+        &outcome.committed, expected,
+        "Return committed another candidate"
+    );
+}
+
+#[test]
 fn same_seed_replays_the_same_schedule() {
     let mut first = Simulation::new(42);
     first.run();
