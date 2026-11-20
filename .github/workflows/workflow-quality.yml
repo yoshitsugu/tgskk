@@ -23,3 +23,5 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
       - name: Check workflows and shell scripts
         run: bash scripts/lint-ci.sh
+      - name: Check release versions
+        run: python3 scripts/check-versions.py
