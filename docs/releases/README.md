@@ -1,7 +1,8 @@
 # リリース手順
 
-1. Cargo workspace、両addonのCMake、ArchのPKGBUILD／.SRCINFO、Debian changelogのバージョンを揃えます。
-   パッケージのrevision（`-2`など）はアプリケーションのバージョンとは別です。
+1. Cargo workspace、3つのaddon（fcitx5／IBus／Windows）のCMake、fcitx5のtgskk.conf、ArchのPKGBUILD／.SRCINFO、Debian changelogのバージョンを揃えます。
+   パッケージのrevision（`-2`など）はアプリケーションのバージョンとは別です。PKGBUILDと.SRCINFOのpkgver／pkgrel、および.SRCINFOに展開済みのprovides／dependsの版数も一致させます。
+   `python3 scripts/check-versions.py`で、これらのバージョンがCargo workspaceと一致し、各書式から抽出できることを検査します。抽出できない書式変更や重複定義も失敗になります。
 2. `docs/releases/<バージョン>.md`に利用者向けの変更点、導入方法、制約を記載します。
 3. 対象commitのCI成功と、クリーンなデスクトップでの導入・入力を確認します。
 4. 対象commitに`v0.1.0`のようなタグを付けてpushします。
