@@ -168,6 +168,19 @@ class VersionCheck(unittest.TestCase):
                 self.edit('packaging/arch/.SRCINFO', line, line.replace(VERSION, WRONG_VERSION))
                 self.assert_rejected('packaging/arch/.SRCINFO')
 
+    def test_depends_missing_in_one_package_section_fails(self):
+        self.edit(
+            'packaging/arch/.SRCINFO',
+            f'\tdepends = tgskk-common-git={VERSION}-{PKGREL}\n\tprovides = tgskk-ibus\n',
+            '\tprovides = tgskk-ibus\n',
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('packaging/arch/.SRCINFO: tgskk-ibus-git:', result.stderr)
+        self.assertNotIn('tgskk-git:', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
     def test_changelog_newest_entry_is_the_one_checked(self):
         self.edit('packaging/debian/changelog', 'tgskk (', f'tgskk ({WRONG_VERSION}-1)\n\ntgskk (')
         self.assert_rejected('packaging/debian/changelog')

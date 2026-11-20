@@ -23,10 +23,8 @@ PKGREL_FILES = (
     ('packaging/arch/.SRCINFO', r'^\tpkgrel = (\S+)$'),
 )
 SRCINFO = 'packaging/arch/.SRCINFO'
-SRCINFO_EXPANDED = (
-    (r'^\tprovides = tgskk-common=(\S+)$', 'tgskk-common', False),
-    (r'^\tdepends = tgskk-common-git=(\S+)$', 'tgskk-common-git', True),
-)
+SRCINFO_PROVIDES = 'tgskk-common'
+SRCINFO_DEPENDS = 'tgskk-common-git'
 
 
 def read(path, errors):
@@ -85,6 +83,50 @@ def changelog_version(errors):
     return match.group(1)
 
 
+def srcinfo_sections(text):
+    sections = []
+    for line in text.splitlines():
+        if line.startswith(('pkgbase = ', 'pkgname = ')):
+            keyword, _, value = line.partition(' = ')
+            sections.append((keyword, value, {}))
+        elif line.startswith('\t') and sections:
+            key, separator, value = line[1:].partition(' = ')
+            if separator:
+                sections[-1][2].setdefault(key, []).append(value)
+    return sections
+
+
+def check_srcinfo_expanded(expected, pkgrel, errors):
+    text = read(SRCINFO, errors)
+    if text is None:
+        return
+    sections = srcinfo_sections(text)
+    if not sections:
+        errors.append(f'{SRCINFO}: no pkgbase or pkgname sections found')
+        return
+    packages = [section for section in sections if section[0] == 'pkgname']
+    if not any(name != SRCINFO_DEPENDS for _, name, _ in packages):
+        errors.append(f'{SRCINFO}: pkgname other than {SRCINFO_DEPENDS} not found')
+    wanted_depends = f'{SRCINFO_DEPENDS}={expected}-{pkgrel}'
+    found_provides = False
+    for _, name, fields in packages:
+        if name != SRCINFO_DEPENDS:
+            depends = [value for value in fields.get('depends', ()) if value.startswith(f'{SRCINFO_DEPENDS}=')]
+            if not depends:
+                errors.append(f'{SRCINFO}: {name}: depends {SRCINFO_DEPENDS} not found')
+            for value in depends:
+                if value != wanted_depends:
+                    errors.append(f'{SRCINFO}: {name}: depends {SRCINFO_DEPENDS} {value} does not match {wanted_depends}')
+        for value in fields.get('provides', ()):
+            if not value.startswith(f'{SRCINFO_PROVIDES}='):
+                continue
+            found_provides = True
+            if value != f'{SRCINFO_PROVIDES}={expected}':
+                errors.append(f'{SRCINFO}: {name}: provides {SRCINFO_PROVIDES} {value} does not match {expected}')
+    if not found_provides:
+        errors.append(f'{SRCINFO}: provides {SRCINFO_PROVIDES} not found')
+
+
 def check_versions(expected, errors):
     for path, pattern in VERSION_FILES:
         value = single(path, 'version', pattern, errors)
@@ -100,14 +142,7 @@ def check_versions(expected, errors):
         errors.append(f'{SRCINFO}: pkgrel {srcinfo_rel} does not match packaging/arch/PKGBUILD pkgrel {pkgbuild_rel}')
     if srcinfo_rel is None:
         return
-    for pattern, name, uses_pkgrel in SRCINFO_EXPANDED:
-        wanted = f'{expected}-{srcinfo_rel}' if uses_pkgrel else expected
-        found = values(SRCINFO, pattern, errors)
-        if found is not None and not found:
-            errors.append(f'{SRCINFO}: {name} not found')
-        for value in found or ():
-            if value != wanted:
-                errors.append(f'{SRCINFO}: {name} {value} does not match {wanted}')
+    check_srcinfo_expanded(expected, srcinfo_rel, errors)
 
 
 def main():
